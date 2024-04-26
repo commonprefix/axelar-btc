@@ -73,6 +73,9 @@ fn main() {
     let script = script.into_script();
 
     // the Gx of secp256k1, incremented till a valid x is found
+    // See
+    // https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki#constructing-and-spending-taproot-outputs,
+    // bullet 3, for a proper way to choose such a key
     let nothing_up_my_sleeve_key = [
         0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC, 0x55, 0xA0, 0x62,
         0x95, 0xCE, 0x87, 0x0B, 0x07, 0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE,
