@@ -7,7 +7,7 @@ use bitcoin::{
     blockdata::{
         transaction,
         locktime::absolute::LockTime,
-        script::{Builder, ScriptBuf},
+        script,
         witness::Witness,
         opcodes::Opcode,
     },
@@ -41,14 +41,14 @@ fn main() {
 
     let tx_in = transaction::TxIn {
         previous_output: transaction::OutPoint::null(),
-        script_sig: ScriptBuf::new(),
+        script_sig: script::ScriptBuf::new(),
         sequence: transaction::Sequence::MAX,
         witness: Witness::new(),
     };
 
     let secp = Secp256k1::new();
 
-    let mut script = Builder::new()
+    let mut script = script::Builder::new()
         .push_key(&committee_keys[0].to_keypair(&secp).public_key().into())
         .push_opcode(ops["CHECKSIG"])
         .push_opcode(ops["IF"])
@@ -93,7 +93,7 @@ fn main() {
         .add_leaf(0, script).unwrap()
         .finalize(&secp, internal_key).unwrap();
 
-    let script_pubkey = ScriptBuf::new_p2tr(
+    let script_pubkey = script::ScriptBuf::new_p2tr(
         &secp,
         taproot_spend_info.internal_key(),
         taproot_spend_info.merkle_root(),
