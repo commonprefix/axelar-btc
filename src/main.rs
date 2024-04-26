@@ -34,7 +34,9 @@ fn main() {
 
     let mut committee_keys: Vec<_> = vec![];
     for i in 0..COMMITTEE_SIZE {
-        committee_keys.push(Xpriv::new_master(NETWORK, &[i.try_into().unwrap()]).unwrap());
+        committee_keys.push(
+            Xpriv::new_master(NETWORK, &[i.try_into().unwrap()]).unwrap()
+        );
     }
 
     let tx_in = transaction::TxIn {
@@ -80,7 +82,9 @@ fn main() {
     while let Err(_) = UntweakedPublicKey::from_slice(&int_key.to_be_bytes()) {
         int_key += 1u32;
     }
-    let internal_key = UntweakedPublicKey::from_slice(&int_key.to_be_bytes()).unwrap();
+    let internal_key = UntweakedPublicKey::from_slice(
+        &int_key.to_be_bytes()
+    ).unwrap();
 
     let taproot_spend_info = TaprootBuilder::new()
         .add_leaf(0, script).unwrap()
