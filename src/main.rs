@@ -180,4 +180,44 @@ fn main() {
     psbt.sign(&receiver_key, &secp).unwrap();
     // TODO: understand why signing fails by printing psbt before and after signing
     let unsigned_peg_out_tx = psbt.extract_tx().unwrap();
+
+    //let mut origins = BTreeMap::new();
+    //// TODO: understand why the mutant doesn't break everything
+    //let mutant = TapLeafHash::from_str("deaddeaddeaddeadeaddeaddeaddeadeaddeaddeaddeaddddeaddeaddeaddead").unwrap();
+
+    //origins.insert(
+    //    receiver_pubkey.x_only_public_key().0,
+    //    // TODO: generate key from within a BIP-32 wallet & use the corresponding derivation path
+    //    (vec![script.tapscript_leaf_hash()], (receiver_xpub.fingerprint(), DerivationPath::master())),
+    //    //(vec![script.tapscript_leaf_hash()], (Fingerprint::from_hex("beefcafe").unwrap(), DerivationPath::master())),
+    //    //(vec![mutant], (Fingerprint::from_hex("beefcafe").unwrap(), DerivationPath::master())),
+    //);
+    //origins.insert(
+    //    internal_key,
+    //    (vec![], (Fingerprint::from_hex("beefcafe").unwrap(), DerivationPath::master())),
+    //);
+    //let ty = psbt::PsbtSighashType::from_str("SIGHASH_ALL").unwrap();
+    //let mut tap_scripts = BTreeMap::new();
+    //tap_scripts.insert(
+    //    peg_in_taproot_spend_info.control_block(&(script.clone(), LeafVersion::TapScript)).unwrap(),
+    //    (script, LeafVersion::TapScript),
+    //);
+
+    //let input = psbt::Input {
+    //    witness_utxo: { Some(peg_in_tx_out) },
+    //    //tap_key_origins: origins,
+    //    tap_merkle_root: peg_in_taproot_spend_info.merkle_root(),
+    //    //sighash_type: Some(ty),
+    //    tap_internal_key: Some(internal_key),
+    //    //tap_scripts,
+    //    ..Default::default()
+    //};
+
+    //psbt.inputs = vec![input];
+
+    //let unsigned_peg_out_tx = psbt.extract_tx().unwrap();
+    //peg_out_tx.verify(|_| {
+    //    Some(peg_in_tx.output[0].clone())
+    //})
+    //.expect("failed to verify transaction");
 }
