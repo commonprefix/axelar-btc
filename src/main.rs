@@ -76,6 +76,12 @@ fn main() {
             .push_opcode(OP_ENDIF);
     }
 
+    script = script
+        .push_int(
+            (1..=COMMITTEE_SIZE).sum::<usize>().try_into().unwrap()
+        )
+        .push_opcode(OP_GREATERTHAN);
+
     let script = script.into_script();
 
     // the Gx of secp256k1, incremented till a valid x is found
