@@ -124,7 +124,7 @@ fn main() {
         version: transaction::Version::TWO,
         lock_time: LockTime::ZERO,
         input: vec![peg_in_tx_in],
-        output: vec![peg_in_tx_out],
+        output: vec![peg_in_tx_out.clone()],
     };
 
     println!("unsigned peg-in tx: {:?}", serialize_hex(&unsigned_peg_in_tx));
@@ -135,4 +135,49 @@ fn main() {
 
     // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest testmempoolaccept '["<serialized signed_peg_in_tx>"]'
     // ensure result contains `"allowed": true`
+
+    let peg_out_tx_in = transaction::TxIn {
+        previous_output: transaction::OutPoint {
+            txid: signed_peg_in_tx.compute_txid(),
+            vout: 0
+        },
+        script_sig: script::ScriptBuf::new(),
+        sequence: transaction::Sequence::MAX,
+        witness: Witness::default(),
+    };
+
+    let receiver_key = Xpriv::new_master(NETWORK, &[0]).unwrap();
+    let receiver_xpub = Xpub::from_priv(&secp, &receiver_key);
+    let receiver_pubkey = receiver_key
+        .to_keypair(&secp)
+        .public_key();
+
+    let peg_out_taproot_spend_info = TaprootBuilder::new()
+        // as per https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki#constructing-and-spending-taproot-outputs, bullet 4
+        .add_leaf(0, script::Builder::new().into_script()).unwrap()
+        .finalize(&secp, receiver_pubkey.into()).unwrap();
+
+    let script_pubkey = script::ScriptBuf::new_p2tr(
+        &secp,
+        peg_out_taproot_spend_info.internal_key(),
+        peg_out_taproot_spend_info.merkle_root(),
+    );
+
+    let unsigned_peg_out_tx = transaction::Transaction {
+        version: transaction::Version::TWO,
+        lock_time: LockTime::ZERO,
+        input: vec![transaction::TxIn {
+            ..Default::default()
+        }],
+        output: vec![transaction::TxOut {
+            value: Amount::from_str("49.999 BTC").unwrap(),
+            script_pubkey,
+        }],
+    };
+
+    let mut psbt = Psbt::from_unsigned_tx(unsigned_peg_out_tx).unwrap();
+    psbt.inputs[0].witness_utxo = Some(peg_in_tx_out);
+    psbt.sign(&receiver_key, &secp).unwrap();
+    // TODO: understand why signing fails by printing psbt before and after signing
+    let unsigned_peg_out_tx = psbt.extract_tx().unwrap();
 }
