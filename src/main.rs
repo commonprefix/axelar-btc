@@ -19,6 +19,7 @@ use bitcoin::{
     taproot::TaprootBuilder,
     key::{Secp256k1, UntweakedPublicKey},
     bip32::Xpriv,
+    consensus::encode::{serialize_hex, deserialize_hex},
 };
 
 fn main() {
@@ -33,8 +34,19 @@ fn main() {
         );
     }
 
-    let tx_in = transaction::TxIn {
-        previous_output: transaction::OutPoint::null(),
+    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest listtransactions "*" 101 100
+    // get txid
+    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest gettransaction <txid> true true
+    // get hex and build coinbase_tx from it
+    let coinbase_tx = deserialize_hex::<transaction::Transaction>(
+        "020000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff025100ffffffff0200f2052a0100000016001453704b1be1c39c398a76e68f3bf4bcb45dece5e60000000000000000266a24aa21a9ede2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf90120000000000000000000000000000000000000000000000000000000000000000000000000"
+    ).unwrap();
+
+    let peg_in_tx_in = transaction::TxIn {
+        previous_output: transaction::OutPoint {
+            txid: coinbase_tx.compute_txid(),
+            vout: 0,
+        },
         script_sig: script::ScriptBuf::new(),
         sequence: transaction::Sequence::MAX,
         witness: Witness::new(),
