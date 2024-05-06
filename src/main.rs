@@ -1,9 +1,11 @@
-use std::collections::HashMap;
+use std::str::FromStr;
+use std::collections::BTreeMap;
 use num_traits::ops::bytes::ToBytes;
 use num_bigint::BigUint;
 
 use bitcoin::{
     Network,
+    TapLeafHash,
     blockdata::{
         transaction,
         locktime::absolute::LockTime,
@@ -16,9 +18,11 @@ use bitcoin::{
         },
     },
     amount::Amount,
-    taproot::TaprootBuilder,
+    taproot::{TaprootBuilder, LeafVersion},
     key::{Secp256k1, UntweakedPublicKey},
-    bip32::Xpriv,
+    bip32::{Xpriv, Xpub, DerivationPath, Fingerprint},
+    Psbt,
+    psbt,
     consensus::encode::{serialize_hex, deserialize_hex},
 };
 
