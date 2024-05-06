@@ -101,26 +101,26 @@ fn main() {
         &int_key.to_be_bytes()
     ).unwrap();
 
-    let taproot_spend_info = TaprootBuilder::new()
+    let peg_in_taproot_spend_info = TaprootBuilder::new()
         .add_leaf(0, script).unwrap()
         .finalize(&secp, internal_key).unwrap();
 
     let script_pubkey = script::ScriptBuf::new_p2tr(
         &secp,
-        taproot_spend_info.internal_key(),
-        taproot_spend_info.merkle_root(),
+        peg_in_taproot_spend_info.internal_key(),
+        peg_in_taproot_spend_info.merkle_root(),
     );
 
-    let tx_out = transaction::TxOut {
+    let peg_in_tx_out = transaction::TxOut {
         value: Amount::ONE_BTC,
         script_pubkey,
     };
 
-    let peg_in_tx = transaction::Transaction {
-        version: transaction::Version(2),
+    let unsigned_peg_in_tx = transaction::Transaction {
+        version: transaction::Version::TWO,
         lock_time: LockTime::ZERO,
-        input: vec![tx_in],
-        output: vec![tx_out],
+        input: vec![peg_in_tx_in],
+        output: vec![peg_in_tx_out],
     };
 
     println!("{peg_in_tx:?}");
