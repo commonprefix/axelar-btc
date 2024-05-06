@@ -9,7 +9,11 @@ use bitcoin::{
         locktime::absolute::LockTime,
         script,
         witness::Witness,
-        opcodes::Opcode,
+        opcodes::all::{
+            OP_CHECKSIG, OP_IF,
+            OP_ELSE, OP_ENDIF,
+            OP_SWAP, OP_ADD, OP_GREATERTHAN
+        },
     },
     amount::Amount,
     taproot::TaprootBuilder,
@@ -21,16 +25,6 @@ fn main() {
     const COMMITTEE_SIZE: usize = 10;
 
     const NETWORK: Network = Network::Regtest;
-
-    let ops: HashMap<&str, Opcode> = HashMap::from([
-        ("CHECKSIG", 0xac.into()),
-        ("IF", 0x63.into()),
-        ("ELSE", 0x67.into()),
-        ("ENDIF", 0x68.into()),
-        ("SWAP", 0x7c.into()),
-        ("ADD", 0x93.into()),
-        ("GREATERTHAN", 0xa0.into()),
-    ]);
 
     let mut committee_keys: Vec<_> = vec![];
     for i in 0..COMMITTEE_SIZE {
@@ -50,24 +44,24 @@ fn main() {
 
     let mut script = script::Builder::new()
         .push_key(&committee_keys[0].to_keypair(&secp).public_key().into())
-        .push_opcode(ops["CHECKSIG"])
-        .push_opcode(ops["IF"])
+        .push_opcode(OP_CHECKSIG)
+        .push_opcode(OP_IF)
         // Each committee member has weight equal to its index + 1
         .push_int(1)
-        .push_opcode(ops["ELSE"])
+        .push_opcode(OP_ELSE)
         .push_int(0)
-        .push_opcode(ops["ENDIF"]);
+        .push_opcode(OP_ENDIF);
 
     for i in 1..COMMITTEE_SIZE {
         script = script
-            .push_opcode(ops["SWAP"])
+            .push_opcode(OP_SWAP)
             .push_key(&committee_keys[i].to_keypair(&secp).public_key().into())
-            .push_opcode(ops["CHECKSIG"])
-            .push_opcode(ops["IF"])
+            .push_opcode(OP_CHECKSIG)
+            .push_opcode(OP_IF)
             // Each committee member has weight equal to its index + 1
             .push_int((i+1).try_into().unwrap())
-            .push_opcode(ops["ADD"])
-            .push_opcode(ops["ENDIF"]);
+            .push_opcode(OP_ADD)
+            .push_opcode(OP_ENDIF);
     }
 
     let script = script.into_script();
