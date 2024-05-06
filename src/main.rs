@@ -123,5 +123,12 @@ fn main() {
         output: vec![peg_in_tx_out],
     };
 
-    println!("{peg_in_tx:?}");
+    println!("unsigned peg-in tx: {:?}", serialize_hex(&unsigned_peg_in_tx));
+
+    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest signrawtransactionwithwallet <serialized unsigned_peg_in_tx>
+    // get hex and build peg_in_tx from it
+    let signed_peg_in_tx = deserialize_hex::<transaction::Transaction>("02000000000101f3c5b238642036b061431c72e658993eec62b421eac83ea10033b07c5dc2e8bd0000000000ffffffff01f0ca052a0100000022512082082dd5929070b7c5b6b0891a40fe8960e00a82a96ca52e4f7db800b3acbb4e0247304402200c221ae75f7717e834f628bb94fc4c90342c413402123c0a496dbed422d6985202206a3b1acb8d69b62c0f439a658c9dc6fac61b2ec7894c01210d7c44663c813e61012103b27c59233c02acb35b1af0b823f9140301210183177050bff400601f7ca761d700000000").unwrap();
+
+    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest testmempoolaccept '["<serialized signed_peg_in_tx>"]'
+    // ensure result contains `"allowed": true`
 }
