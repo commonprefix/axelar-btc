@@ -112,7 +112,7 @@ fn main() {
     );
 
     let peg_in_tx_out = transaction::TxOut {
-        value: Amount::ONE_BTC,
+        value: Amount::from_str("49.9999 BTC").unwrap(),
         script_pubkey,
     };
 
