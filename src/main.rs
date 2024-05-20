@@ -27,7 +27,7 @@ use bitcoin::{
 };
 
 fn main() {
-    const COMMITTEE_SIZE: usize = 10;
+    const COMMITTEE_SIZE: usize = 4;
 
     const NETWORK: Network = Network::Regtest;
 
