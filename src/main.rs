@@ -37,7 +37,7 @@ fn main() {
 
     const NETWORK: Network = Network::Regtest;
 
-    let mut committee_keys: Vec<_> = vec![];
+    let mut committee_keys = vec![];
     for i in 0..COMMITTEE_SIZE {
         committee_keys.push(
             Xpriv::new_master(NETWORK, &[i.try_into().unwrap()]).unwrap()
