@@ -115,7 +115,7 @@ fn main() {
         .add_leaf(0, script).unwrap()
         .finalize(&secp, internal_key).unwrap();
 
-    let script_pubkey = script::ScriptBuf::new_p2tr(
+    let peg_in_tx_script_pubkey = script::ScriptBuf::new_p2tr(
         &secp,
         peg_in_taproot_spend_info.internal_key(),
         peg_in_taproot_spend_info.merkle_root(),
@@ -123,7 +123,7 @@ fn main() {
 
     let peg_in_tx_out = transaction::TxOut {
         value: Amount::from_str("49.9999 BTC").unwrap(),
-        script_pubkey,
+        script_pubkey: peg_in_tx_script_pubkey,
     };
 
     let unsigned_peg_in_tx = transaction::Transaction {
@@ -163,7 +163,7 @@ fn main() {
         .add_leaf(0, script::Builder::new().into_script()).unwrap()
         .finalize(&secp, receiver_pubkey.into()).unwrap();
 
-    let script_pubkey = script::ScriptBuf::new_p2tr(
+    let peg_out_tx_script_pubkey = script::ScriptBuf::new_p2tr(
         &secp,
         peg_out_taproot_spend_info.internal_key(),
         peg_out_taproot_spend_info.merkle_root(),
@@ -177,7 +177,7 @@ fn main() {
         }],
         output: vec![transaction::TxOut {
             value: Amount::from_str("49.999 BTC").unwrap(),
-            script_pubkey,
+            script_pubkey: peg_out_tx_script_pubkey,
         }],
     };
 
