@@ -20,7 +20,7 @@ use bitcoin::{
     amount::Amount,
     taproot::{TaprootBuilder, LeafVersion},
     key::{Secp256k1, UntweakedPublicKey},
-    bip32::{Xpriv, Xpub, DerivationPath, Fingerprint},
+    bip32::{Xpriv, Xpub, DerivationPath, Fingerprint, KeySource},
     Psbt,
     psbt,
     consensus::encode::{serialize_hex, deserialize_hex},
@@ -123,7 +123,7 @@ fn main() {
 
     let peg_in_tx_out = transaction::TxOut {
         value: Amount::from_str("49.9999 BTC").unwrap(),
-        script_pubkey: peg_in_tx_script_pubkey,
+        script_pubkey: peg_in_tx_script_pubkey.clone(),
     };
 
     let unsigned_peg_in_tx = transaction::Transaction {
@@ -183,8 +183,14 @@ fn main() {
 
     let mut psbt = Psbt::from_unsigned_tx(unsigned_peg_out_tx).unwrap();
     psbt.inputs[0].witness_utxo = Some(peg_in_tx_out);
-    psbt.sign(&receiver_key, &secp).unwrap();
-    // TODO: understand why signing fails by printing psbt before and after signing
+    psbt.inputs[0].tap_key_origins = BTreeMap::<bitcoin::XOnlyPublicKey, (Vec<TapLeafHash>, KeySource)>::new();
+    psbt.inputs[0].tap_key_origins.insert(
+        committee_keys[0].to_keypair(&secp).public_key().into(),
+        (
+            vec![peg_in_tx_script_pubkey.tapscript_leaf_hash()],
+            (Xpub::from_priv(&secp, &committee_keys[0]).fingerprint(), DerivationPath::default())
+        )
+    );
     let unsigned_peg_out_tx = psbt.extract_tx().unwrap();
 
     //let mut origins = BTreeMap::new();
