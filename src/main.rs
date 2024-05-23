@@ -111,7 +111,7 @@ fn main() {
     ).unwrap();
 
     let peg_in_taproot_spend_info = TaprootBuilder::new()
-        .add_leaf(0, script).unwrap()
+        .add_leaf(0, script.clone()).unwrap()
         .finalize(&secp, internal_key).unwrap();
 
     let peg_in_tx_script_pubkey = script::ScriptBuf::new_p2tr(
@@ -187,4 +187,32 @@ fn main() {
             (Xpub::from_priv(&secp, &committee_keys[0]).fingerprint(), DerivationPath::default())
         )
     );
+
+    psbt.inputs[0].tap_scripts = BTreeMap::new();
+    psbt.inputs[0].tap_scripts.insert(
+        peg_in_taproot_spend_info.control_block(&(script.clone(), LeafVersion::TapScript)).unwrap(),
+        (script, LeafVersion::TapScript),
+    );
+
+    psbt.sign(&receiver_key, &secp).unwrap();
+
+    let mut script_witness = Witness::new();
+    for (_, sig) in psbt.inputs[0].tap_script_sigs.iter() {
+        script_witness.push(sig.to_vec());
+    }
+    for (control_block, (script, _)) in psbt.inputs[0].tap_scripts.iter() {
+        script_witness.push(script.to_bytes());
+        script_witness.push(control_block.serialize());
+    }
+    psbt.inputs[0].final_script_witness = Some(script_witness);
+    psbt.inputs[0].partial_sigs = BTreeMap::new();
+    psbt.inputs[0].sighash_type = None;
+    psbt.inputs[0].redeem_script = None;
+    psbt.inputs[0].witness_script = None;
+    psbt.inputs[0].bip32_derivation = BTreeMap::new();
+    psbt.inputs[0].tap_script_sigs = BTreeMap::new();
+    psbt.inputs[0].tap_scripts = BTreeMap::new();
+    psbt.inputs[0].tap_key_sig = None;
+
+    let signed_peg_out_tx = psbt.extract_tx().unwrap();
 }
