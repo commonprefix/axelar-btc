@@ -185,6 +185,7 @@ fn main() {
     psbt.inputs[0].witness_utxo = Some(peg_in_tx_out);
     psbt.inputs[0].tap_key_origins = BTreeMap::<bitcoin::XOnlyPublicKey, (Vec<TapLeafHash>, KeySource)>::new();
     psbt.inputs[0].tap_key_origins.insert(
+    // TODO: iterate over all committee_keys
         committee_keys[0].to_keypair(&secp).public_key().into(),
         (
             vec![peg_in_tx_script_pubkey.tapscript_leaf_hash()],
