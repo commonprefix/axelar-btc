@@ -215,4 +215,6 @@ fn main() {
     psbt.inputs[0].tap_key_sig = None;
 
     let signed_peg_out_tx = psbt.extract_tx().unwrap();
+
+    println!("  signed peg-out tx: {:?}", serialize_hex(&signed_peg_out_tx));
 }
