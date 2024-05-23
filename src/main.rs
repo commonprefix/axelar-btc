@@ -20,9 +20,8 @@ use bitcoin::{
     amount::Amount,
     taproot::{TaprootBuilder, LeafVersion},
     key::{Secp256k1, UntweakedPublicKey},
-    bip32::{Xpriv, Xpub, DerivationPath, Fingerprint, KeySource},
+    bip32::{Xpriv, Xpub, DerivationPath, KeySource},
     Psbt,
-    psbt,
     consensus::encode::{serialize_hex, deserialize_hex},
 };
 
@@ -153,7 +152,6 @@ fn main() {
     };
 
     let receiver_key = Xpriv::new_master(NETWORK, &[0]).unwrap();
-    let receiver_xpub = Xpub::from_priv(&secp, &receiver_key);
     let receiver_pubkey = receiver_key
         .to_keypair(&secp)
         .public_key();
