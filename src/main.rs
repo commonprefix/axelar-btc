@@ -170,9 +170,7 @@ fn main() {
     let unsigned_peg_out_tx = transaction::Transaction {
         version: transaction::Version::TWO,
         lock_time: LockTime::ZERO,
-        input: vec![transaction::TxIn {
-            ..Default::default()
-        }],
+        input: vec![peg_out_tx_in],
         output: vec![transaction::TxOut {
             value: Amount::from_str("49.999 BTC").unwrap(),
             script_pubkey: peg_out_tx_script_pubkey,
