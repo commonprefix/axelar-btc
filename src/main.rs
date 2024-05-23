@@ -66,7 +66,7 @@ fn main() {
     let secp = Secp256k1::new();
 
     let mut script = script::Builder::new()
-        .push_key(&committee_keys[0].to_keypair(&secp).public_key().into())
+        .push_x_only_key(&committee_keys[0].to_keypair(&secp).x_only_public_key().0)
         .push_opcode(OP_CHECKSIG)
         .push_opcode(OP_IF)
         // Each committee member has weight equal to its index + 1
@@ -78,7 +78,7 @@ fn main() {
     for i in 1..COMMITTEE_SIZE {
         script = script
             .push_opcode(OP_SWAP)
-            .push_key(&committee_keys[i].to_keypair(&secp).public_key().into())
+            .push_x_only_key(&committee_keys[i].to_keypair(&secp).x_only_public_key().0)
             .push_opcode(OP_CHECKSIG)
             .push_opcode(OP_IF)
             // In this example, each committee member has weight equal to its index + 1
