@@ -226,3 +226,6 @@ fn main() {
     // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest testmempoolaccept '["<serialized signed_peg_in_tx>","<serialized signed_peg_out_tx>"]'
     // ensure result contains `"allowed": true` twice, once for each tx
 }
+
+// TODO: Add key path with MuSig2 including the largest 2/3rds of the validators by voting power as recommended by https://gist.github.com/mappum/da11e37f4e90891642a52621594d03f6
+// TODO: Consider FROST/ROAST/wsts for key path, maybe then remove script path completely
