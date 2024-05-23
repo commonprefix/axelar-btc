@@ -220,7 +220,7 @@ fn main() {
 
     let signed_peg_out_tx = psbt.extract_tx().unwrap();
 
-    println!("  signed peg-out tx: {:?}", serialize_hex(&signed_peg_out_tx));
+    println!("signed peg-out tx: {:?}", serialize_hex(&signed_peg_out_tx));
 
     // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest testmempoolaccept '["<serialized signed_peg_in_tx>","<serialized signed_peg_out_tx>"]'
     // ensure result contains `"allowed": true` twice, once for each tx
