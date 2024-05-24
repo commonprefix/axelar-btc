@@ -31,7 +31,7 @@ fn main() {
     // First time
     // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest -named createwallet wallet_name=default load_on_startup=true
     // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest getnewaddress
-    // $ bitcoin-core.cli  -rpcport=18443 -rpcpassword=1234 -regtest generatetoaddress 101 <previous_output>
+    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest generatetoaddress 101 <previous_output>
     const COMMITTEE_SIZE: usize = 3;
 
     const NETWORK: Network = Network::Regtest;
@@ -47,9 +47,7 @@ fn main() {
     // get txid
     // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest gettransaction <txid> true true
     // get hex and build coinbase_tx from it:
-    let coinbase_tx = deserialize_hex::<transaction::Transaction>(
-        "020000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff025100ffffffff0200f2052a0100000016001453704b1be1c39c398a76e68f3bf4bcb45dece5e60000000000000000266a24aa21a9ede2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf90120000000000000000000000000000000000000000000000000000000000000000000000000"
-    ).unwrap();
+    let coinbase_tx = deserialize_hex::<transaction::Transaction>("020000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff025100ffffffff0200f2052a0100000016001453704b1be1c39c398a76e68f3bf4bcb45dece5e60000000000000000266a24aa21a9ede2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf90120000000000000000000000000000000000000000000000000000000000000000000000000").unwrap();
 
     // Build peg-in tx that spends coinbase
 
