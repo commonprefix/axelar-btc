@@ -32,7 +32,7 @@ fn main() {
     // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest -named createwallet wallet_name=default load_on_startup=true
     // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest getnewaddress
     // $ bitcoin-core.cli  -rpcport=18443 -rpcpassword=1234 -regtest generatetoaddress 101 <previous_output>
-    const COMMITTEE_SIZE: usize = 4;
+    const COMMITTEE_SIZE: usize = 3;
 
     const NETWORK: Network = Network::Regtest;
 
