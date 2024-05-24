@@ -9,7 +9,7 @@ use bitcoin::{
     blockdata::{
         transaction,
         locktime::absolute::LockTime,
-        script,
+        script::{self, Instruction},
         witness::Witness,
         opcodes::all::{
             OP_CHECKSIG, OP_IF,
@@ -223,6 +223,17 @@ fn main() {
 
     // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest testmempoolaccept '["<serialized signed_peg_in_tx>", "<serialized signed_peg_out_tx>"]'
     // ensure result contains `"allowed": true` twice, once for each tx
+    for inst in signed_peg_out_tx.input[0].witness.tapscript().unwrap().instructions() {
+        match inst.unwrap() {
+            Instruction::PushBytes(bytes) => {
+                for byte in bytes.as_bytes() {
+                    print!("{:x}", byte);
+                }
+                println!();
+            },
+            Instruction::Op(opcode) => println!("{opcode:?}"),
+        }
+    }
 }
 
 // TODO: Add key path with MuSig2 including the largest 2/3rds of the validators by voting power as recommended by https://gist.github.com/mappum/da11e37f4e90891642a52621594d03f6
