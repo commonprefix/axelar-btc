@@ -89,7 +89,7 @@ fn main() {
 
     script = script
         .push_int(
-            1//(1..=COMMITTEE_SIZE).sum::<usize>().try_into().unwrap()
+            1 // This means that one key is enough. Set to 0 to ignore invalid signatures during debugging. TODO: require all (or some) keys: (1..=COMMITTEE_SIZE).sum::<usize>().try_into().unwrap()
         )
         .push_opcode(OP_GREATERTHAN);
 
