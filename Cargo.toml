@@ -9,3 +9,4 @@ edition = "2021"
 bitcoin = "*"
 num-bigint = "*"
 num-traits = "*"
+bitcoincore-rpc = { git = "https://github.com/rust-bitcoin/rust-bitcoincore-rpc" }

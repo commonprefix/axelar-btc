@@ -1,152 +1,160 @@
-use std::str::FromStr;
-use std::collections::BTreeMap;
-use num_traits::ops::bytes::ToBytes;
+use bitcoin::key::rand;
+use bitcoin::Address;
+use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use num_bigint::BigUint;
+use num_traits::ops::bytes::ToBytes;
+use std::str::FromStr;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use bitcoin::{
-    Network,
-    TapLeafHash,
-    blockdata::{
-        transaction,
-        locktime::absolute::LockTime,
-        script::{self, Instruction},
-        witness::Witness,
-        opcodes::all::{
-            OP_CHECKSIG, OP_IF,
-            OP_ELSE, OP_ENDIF,
-            OP_SWAP, OP_ADD, OP_GREATERTHAN
-        },
-    },
     amount::Amount,
-    taproot::{TaprootBuilder, LeafVersion},
+    bip32::{DerivationPath, KeySource, Xpriv, Xpub},
+    blockdata::{locktime::absolute::LockTime, script, transaction, witness::Witness},
     key::{Secp256k1, UntweakedPublicKey},
-    bip32::{Xpriv, Xpub, DerivationPath, KeySource},
-    Psbt,
-    consensus::encode::{serialize_hex, deserialize_hex},
+    opcodes::all::{
+        OP_ADD, OP_CHECKSIG, OP_DROP, OP_DUP, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_GREATERTHANOREQUAL,
+        OP_IF, OP_SWAP,
+    },
+    taproot::{LeafVersion, TaprootBuilder},
+    Network, Psbt, ScriptBuf, TapLeafHash, XOnlyPublicKey,
 };
 
-fn main() {
-    // Every time
-    // $ bitcoin-core.daemon -chain=regtest -rpcpassword=1234
-    // First time
-    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest -named createwallet wallet_name=default load_on_startup=true
-    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest getnewaddress
-    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest generatetoaddress 101 <previous_output>
-    const COMMITTEE_SIZE: usize = 3;
+fn create_op_return() -> ScriptBuf {
+    let data = b"ethereum:0x0000000000000000000000000000000000000000:foobar";
+    ScriptBuf::new_op_return(data)
+}
 
-    const NETWORK: Network = Network::Regtest;
-
-    let mut committee_keys = vec![];
-    for i in 0..COMMITTEE_SIZE {
-        committee_keys.push(
-            Xpriv::new_master(NETWORK, &[i.try_into().unwrap()]).unwrap()
-        );
+fn create_multisig_script(committee_keys: &Vec<Xpriv>) -> ScriptBuf {
+    let secp = Secp256k1::new();
+    let mut script = script::Builder::new().push_int(0);
+    for i in 0..committee_keys.len() {
+        script = script
+            .push_opcode(OP_SWAP)
+            .push_opcode(OP_DUP)
+            .push_int(0)
+            .push_opcode(OP_EQUAL)
+            .push_opcode(OP_IF) // IF empty signature
+            .push_opcode(OP_DROP) // drop empty signature
+            .push_opcode(OP_ELSE) // ELSE verify non-empty signature
+            .push_x_only_key(
+                &committee_keys[COMMITTEE_SIZE - 1 - i]
+                    .to_keypair(&secp)
+                    .x_only_public_key()
+                    .0,
+            )
+            .push_opcode(OP_CHECKSIG)
+            .push_opcode(OP_IF)
+            // Each committee member has weight equal to its index + 1
+            .push_int(1)
+            .push_opcode(OP_ELSE)
+            .push_int(0)
+            .push_opcode(OP_ENDIF) // ENDIF valid signature
+            .push_opcode(OP_ADD)
+            .push_opcode(OP_ENDIF); // ENDIF empty signature
     }
+    script = script.push_int(2).push_opcode(OP_GREATERTHANOREQUAL);
 
-    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest listtransactions "*" 101 100
-    // get txid
-    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest gettransaction <txid> true true
-    // get hex and build coinbase_tx from it:
-    let coinbase_tx = deserialize_hex::<transaction::Transaction>("020000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff025100ffffffff0200f2052a0100000016001453704b1be1c39c398a76e68f3bf4bcb45dece5e60000000000000000266a24aa21a9ede2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf90120000000000000000000000000000000000000000000000000000000000000000000000000").unwrap();
+    script.into_script()
+}
 
-    // Build peg-in tx that spends coinbase
+fn create_unspendable_internal_key() -> XOnlyPublicKey {
+    // the Gx of SECP, incremented till a valid x is found
+    // See
+    // https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki#constructing-and-spending-taproot-outputs,
+    // bullet 3, for a proper way to choose such a key
+    let nothing_up_my_sleeve_key = [
+        0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC, 0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B,
+        0x07, 0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9, 0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8,
+        0x17, 0x99,
+    ];
+    let mut int_key = BigUint::from_bytes_be(&nothing_up_my_sleeve_key);
+    while let Err(_) = UntweakedPublicKey::from_slice(&int_key.to_be_bytes()) {
+        int_key += 1u32;
+    }
+    let internal_key = UntweakedPublicKey::from_slice(&int_key.to_be_bytes()).unwrap();
 
-    let peg_in_tx_in = transaction::TxIn {
+    internal_key
+}
+
+const COMMITTEE_SIZE: usize = 75;
+const NETWORK: Network = Network::Regtest;
+// $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest listtransactions "*" 101 100
+// get txid
+// $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest gettransaction <txid> true true
+// get hex and build coinbase_tx from it:
+
+fn create_peg_in_tx(
+    coinbase_tx: &transaction::Transaction,
+    coinbase_vout: &usize,
+    committee_keys: &Vec<Xpriv>,
+    rpc: &Client,
+) -> transaction::Transaction {
+    let secp = Secp256k1::new();
+    let tx_in = transaction::TxIn {
         previous_output: transaction::OutPoint {
             txid: coinbase_tx.compute_txid(),
-            vout: 0,
+            vout: u32::try_from(*coinbase_vout).unwrap(),
         },
         script_sig: script::ScriptBuf::new(),
         sequence: transaction::Sequence::MAX,
         witness: Witness::new(),
     };
 
-    let secp = Secp256k1::new();
+    let script = create_multisig_script(&committee_keys);
+    let internal_key = create_unspendable_internal_key();
 
-    let mut script = script::Builder::new()
-        .push_x_only_key(&committee_keys[0].to_keypair(&secp).x_only_public_key().0)
-        .push_opcode(OP_CHECKSIG)
-        .push_opcode(OP_IF)
-        // Each committee member has weight equal to its index + 1
-        .push_int(1)
-        .push_opcode(OP_ELSE)
-        .push_int(0)
-        .push_opcode(OP_ENDIF);
+    let taproot_spend_info = TaprootBuilder::new()
+        .add_leaf(0, script.clone())
+        .unwrap()
+        .finalize(&secp, internal_key)
+        .unwrap();
 
-    for i in 1..COMMITTEE_SIZE {
-        script = script
-            .push_opcode(OP_SWAP)
-            .push_x_only_key(&committee_keys[i].to_keypair(&secp).x_only_public_key().0)
-            .push_opcode(OP_CHECKSIG)
-            .push_opcode(OP_IF)
-            // In this example, each committee member has weight equal to its index + 1
-            .push_int((i+1).try_into().unwrap())
-            .push_opcode(OP_ADD)
-            .push_opcode(OP_ENDIF);
-    }
-
-    script = script
-        .push_int(
-            1 // This means that one key is enough. Set to 0 to ignore invalid signatures during debugging. TODO: require all (or some) keys: (1..=COMMITTEE_SIZE).sum::<usize>().try_into().unwrap()
-        )
-        .push_opcode(OP_GREATERTHAN);
-
-    let script = script.into_script();
-
-    // the Gx of secp256k1, incremented till a valid x is found
-    // See
-    // https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki#constructing-and-spending-taproot-outputs,
-    // bullet 3, for a proper way to choose such a key
-    let nothing_up_my_sleeve_key = [
-        0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC, 0x55, 0xA0, 0x62,
-        0x95, 0xCE, 0x87, 0x0B, 0x07, 0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE,
-        0x28, 0xD9, 0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8, 0x17, 0x99,
-    ];
-    let mut int_key = BigUint::from_bytes_be(&nothing_up_my_sleeve_key);
-    while let Err(_) = UntweakedPublicKey::from_slice(&int_key.to_be_bytes()) {
-        int_key += 1u32;
-    }
-    let internal_key = UntweakedPublicKey::from_slice(
-        &int_key.to_be_bytes()
-    ).unwrap();
-
-    let peg_in_taproot_spend_info = TaprootBuilder::new()
-        .add_leaf(0, script.clone()).unwrap()
-        .finalize(&secp, internal_key).unwrap();
-
-    let peg_in_tx_script_pubkey = script::ScriptBuf::new_p2tr(
+    let tx_script_pubkey = script::ScriptBuf::new_p2tr(
         &secp,
-        peg_in_taproot_spend_info.internal_key(),
-        peg_in_taproot_spend_info.merkle_root(),
+        taproot_spend_info.internal_key(),
+        taproot_spend_info.merkle_root(),
     );
 
-    let peg_in_tx_out = transaction::TxOut {
+    let tx_out = transaction::TxOut {
         value: Amount::from_str("49.9999 BTC").unwrap(),
-        script_pubkey: peg_in_tx_script_pubkey.clone(),
+        script_pubkey: tx_script_pubkey.clone(),
     };
 
-    let unsigned_peg_in_tx = transaction::Transaction {
+    let op_return_out = transaction::TxOut {
+        value: Amount::ZERO,
+        script_pubkey: create_op_return(),
+    };
+
+    let unsigned_tx = transaction::Transaction {
         version: transaction::Version::TWO,
         lock_time: LockTime::ZERO,
-        input: vec![peg_in_tx_in],
-        output: vec![peg_in_tx_out.clone()],
+        input: vec![tx_in],
+        output: vec![tx_out.clone(), op_return_out],
     };
 
-    println!("unsigned peg-in tx: {:?}", serialize_hex(&unsigned_peg_in_tx));
+    let signed_raw_transaction = rpc
+        .sign_raw_transaction_with_wallet(&unsigned_tx, None, None)
+        .unwrap();
+    if !signed_raw_transaction.complete {
+        println!("{:#?}", signed_raw_transaction.errors);
+        panic!("Transaction couldn't be signed.")
+    }
+    signed_raw_transaction.transaction().unwrap()
+}
 
-    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest signrawtransactionwithwallet <serialized unsigned_peg_in_tx>
-    // get hex and build peg_in_tx from it
-    let signed_peg_in_tx = deserialize_hex::<transaction::Transaction>("02000000000101f3c5b238642036b061431c72e658993eec62b421eac83ea10033b07c5dc2e8bd0000000000ffffffff01f0ca052a0100000022512082082dd5929070b7c5b6b0891a40fe8960e00a82a96ca52e4f7db800b3acbb4e0247304402200c221ae75f7717e834f628bb94fc4c90342c413402123c0a496dbed422d6985202206a3b1acb8d69b62c0f439a658c9dc6fac61b2ec7894c01210d7c44663c813e61012103b27c59233c02acb35b1af0b823f9140301210183177050bff400601f7ca761d700000000").unwrap();
-
-    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest testmempoolaccept '["<serialized signed_peg_in_tx>"]'
-    // ensure result contains `"allowed": true`
+fn create_peg_out_tx(
+    signed_peg_in_tx: &transaction::Transaction,
+    committee_keys: &Vec<Xpriv>,
+    validator_index: usize,
+) -> Psbt {
+    let secp = Secp256k1::new();
+    let script = create_multisig_script(committee_keys);
 
     // Build peg-out tx that spends peg-in tx
-
     let peg_out_tx_in = transaction::TxIn {
         previous_output: transaction::OutPoint {
             txid: signed_peg_in_tx.compute_txid(),
-            vout: 0
+            vout: 0,
         },
         script_sig: script::ScriptBuf::new(),
         sequence: transaction::Sequence::MAX,
@@ -154,60 +162,100 @@ fn main() {
     };
 
     let receiver_key = Xpriv::new_master(NETWORK, &[0]).unwrap();
-    let receiver_pubkey = receiver_key
-        .to_keypair(&secp)
-        .public_key();
+    let receiver_pubkey = receiver_key.to_keypair(&secp).public_key();
+    let internal_key = create_unspendable_internal_key();
 
-    let peg_out_taproot_spend_info = TaprootBuilder::new()
-        // as per https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki#constructing-and-spending-taproot-outputs, bullet 4
-        .add_leaf(0, script::Builder::new().into_script()).unwrap()
-        .finalize(&secp, receiver_pubkey.into()).unwrap();
+    let peg_in_taproot_spend_info = TaprootBuilder::new()
+        .add_leaf(0, script.clone())
+        .unwrap()
+        .finalize(&secp, internal_key)
+        .unwrap();
 
-    let peg_out_tx_script_pubkey = script::ScriptBuf::new_p2tr(
-        &secp,
-        peg_out_taproot_spend_info.internal_key(),
-        peg_out_taproot_spend_info.merkle_root(),
-    );
+    // let peg_out_taproot_spend_info = TaprootBuilder::new()
+    //     // as per https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki#constructing-and-spending-taproot-outputs, bullet 4
+    //     .add_leaf(0, script::Builder::new().into_script())
+    //     .unwrap()
+    //     .finalize(&secp, receiver_pubkey.to_x_only_pub())
+    //     .unwrap();
+
+    let p2pk = ScriptBuf::new_p2pk(&receiver_pubkey.into());
+
+    // let peg_out_tx_script_pubkey = script::ScriptBuf::new_p2tr(
+    //     &secp,
+    //     peg_out_taproot_spend_info.internal_key(),
+    //     peg_out_taproot_spend_info.merkle_root(),
+    // );
 
     let unsigned_peg_out_tx = transaction::Transaction {
         version: transaction::Version::TWO,
         lock_time: LockTime::ZERO,
         input: vec![peg_out_tx_in],
         output: vec![transaction::TxOut {
-            value: Amount::from_str("49.999 BTC").unwrap(),
-            script_pubkey: peg_out_tx_script_pubkey,
+            value: Amount::from_str("49.998 BTC").unwrap(),
+            script_pubkey: p2pk,
         }],
     };
 
-    let mut psbt = Psbt::from_unsigned_tx(unsigned_peg_out_tx).unwrap();
-    psbt.inputs[0].witness_utxo = Some(peg_in_tx_out);
-    psbt.inputs[0].tap_key_origins = BTreeMap::<bitcoin::XOnlyPublicKey, (Vec<TapLeafHash>, KeySource)>::new();
+    let mut psbt = Psbt::from_unsigned_tx(unsigned_peg_out_tx.clone()).unwrap();
+    psbt.inputs[0].witness_utxo = Some(signed_peg_in_tx.output[0].to_owned());
+    psbt.inputs[0].tap_key_origins =
+        BTreeMap::<bitcoin::XOnlyPublicKey, (Vec<TapLeafHash>, KeySource)>::new();
     psbt.inputs[0].tap_key_origins.insert(
-    // TODO: iterate over all committee_keys
-        committee_keys[0].to_keypair(&secp).public_key().into(),
+        committee_keys[validator_index]
+            .to_keypair(&secp)
+            .x_only_public_key()
+            .0,
         (
-            vec![peg_in_tx_script_pubkey.tapscript_leaf_hash()],
-            (Xpub::from_priv(&secp, &committee_keys[0]).fingerprint(), DerivationPath::default())
-        )
+            vec![script.tapscript_leaf_hash()],
+            (
+                Xpub::from_priv(&secp, &committee_keys[validator_index]).fingerprint(),
+                DerivationPath::default(),
+            ),
+        ),
     );
 
     psbt.inputs[0].tap_scripts = BTreeMap::new();
     psbt.inputs[0].tap_scripts.insert(
-        peg_in_taproot_spend_info.control_block(&(script.clone(), LeafVersion::TapScript)).unwrap(),
-        (script, LeafVersion::TapScript),
+        peg_in_taproot_spend_info
+            .control_block(&(script.clone(), LeafVersion::TapScript))
+            .unwrap(),
+        (script.to_owned(), LeafVersion::TapScript),
     );
 
-    psbt.sign(&receiver_key, &secp).unwrap();
+    psbt.sign(&committee_keys[validator_index], &secp).unwrap();
+
+    return psbt;
+}
+
+fn finalize_psbt(mut psbt: Psbt, committee_keys: &Vec<Xpriv>) -> transaction::Transaction {
+    let secp = Secp256k1::new();
+
+    let script = create_multisig_script(&committee_keys);
+    let internal_key = create_unspendable_internal_key();
+    let peg_in_taproot_spend_info = TaprootBuilder::new()
+        .add_leaf(0, script.clone())
+        .unwrap()
+        .finalize(&secp, internal_key)
+        .unwrap();
 
     let mut script_witness = Witness::new();
-    for (_, sig) in psbt.inputs[0].tap_script_sigs.iter() {
-        script_witness.push(sig.to_vec());
+    for i in 0..COMMITTEE_SIZE {
+        let signature_option = psbt.inputs[0].tap_script_sigs.get(&(
+            committee_keys[i].to_keypair(&secp).x_only_public_key().0,
+            script.tapscript_leaf_hash(),
+        ));
+        if let Some(signature) = signature_option {
+            script_witness.push(signature.to_vec());
+        } else {
+            script_witness.push(&[]);
+        }
     }
     for (control_block, (script, _)) in psbt.inputs[0].tap_scripts.iter() {
         script_witness.push(script.to_bytes());
         script_witness.push(control_block.serialize());
     }
     psbt.inputs[0].final_script_witness = Some(script_witness);
+    psbt.inputs[0].tap_merkle_root = peg_in_taproot_spend_info.merkle_root();
     psbt.inputs[0].partial_sigs = BTreeMap::new();
     psbt.inputs[0].sighash_type = None;
     psbt.inputs[0].redeem_script = None;
@@ -217,24 +265,109 @@ fn main() {
     psbt.inputs[0].tap_scripts = BTreeMap::new();
     psbt.inputs[0].tap_key_sig = None;
 
-    let signed_peg_out_tx = psbt.extract_tx().unwrap();
-
-    println!("signed peg-out tx: {:?}", serialize_hex(&signed_peg_out_tx));
-
-    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest testmempoolaccept '["<serialized signed_peg_in_tx>", "<serialized signed_peg_out_tx>"]'
-    // ensure result contains `"allowed": true` twice, once for each tx
-    for inst in signed_peg_out_tx.input[0].witness.tapscript().unwrap().instructions() {
-        match inst.unwrap() {
-            Instruction::PushBytes(bytes) => {
-                for byte in bytes.as_bytes() {
-                    print!("{:x}", byte);
-                }
-                println!();
-            },
-            Instruction::Op(opcode) => println!("{opcode:?}"),
-        }
-    }
+    psbt.extract_tx().unwrap()
 }
 
-// TODO: Add key path with MuSig2 including the largest 2/3rds of the validators by voting power as recommended by https://gist.github.com/mappum/da11e37f4e90891642a52621594d03f6
-// TODO: Consider FROST/ROAST/wsts for key path, maybe then remove script path completely
+fn init_wallet(rpc: &Client) -> (Address, transaction::Transaction, usize) {
+    let random_number = rand::random::<usize>().to_string();
+    let random_label = random_number.as_str();
+
+    let _ = rpc
+        .create_wallet("default", None, None, None, None)
+        .unwrap();
+    let _ = rpc.load_wallet("default");
+
+    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest getnewaddress
+    let address = rpc
+        .get_new_address(Some(random_label), None)
+        .unwrap()
+        .require_network(NETWORK)
+        .unwrap();
+
+    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest generatetoaddress 101 <previous_output>
+    rpc.generate_to_address(101, &address).unwrap();
+
+    // let coinbase_txid = rpc
+    //     .send_to_address(
+    //         &address,
+    //         Amount::from_int_btc(60),
+    //         None,
+    //         None,
+    //         None,
+    //         None,
+    //         None,
+    //         None,
+    //     )
+    //     .unwrap();
+
+    // rpc.generate_to_address(1, &address).unwrap();
+
+    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest listtransactions "*" 101 100
+    let coinbase_txid = rpc
+        .list_transactions(Some(random_label), Some(101), Some(100), None)
+        .unwrap()[0]
+        .info
+        .txid;
+
+    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest gettransaction <txid> true true
+    let coinbase_tx = rpc
+        .get_transaction(&coinbase_txid, None)
+        .unwrap()
+        .transaction()
+        .unwrap();
+
+    let coinbase_vout = 0;
+
+    (address, coinbase_tx, coinbase_vout)
+}
+
+fn main() {
+    let rpc = Client::new(
+        "http://127.0.0.1:18443",
+        Auth::CookieFile(PathBuf::from("/home/themicp/.bitcoin/regtest/.cookie")), // TODO: don't hardcode this
+    )
+    .unwrap();
+    let (address, coinbase_tx, coinbase_vout) = init_wallet(&rpc);
+
+    let mut committee_keys = vec![];
+    for i in 0..COMMITTEE_SIZE {
+        committee_keys.push(Xpriv::new_master(NETWORK, &[i.try_into().unwrap()]).unwrap());
+    }
+
+    let peg_in = create_peg_in_tx(&coinbase_tx, &coinbase_vout, &committee_keys, &rpc);
+    let mut psbt = create_peg_out_tx(&peg_in, &committee_keys, 0);
+    for i in 1..COMMITTEE_SIZE {
+        let current_psbt = create_peg_out_tx(&peg_in, &committee_keys, i);
+        psbt.combine(current_psbt).unwrap();
+    }
+
+    let tx = finalize_psbt(psbt, &committee_keys);
+    let result = rpc.test_mempool_accept(&[peg_in.raw_hex(), tx.raw_hex()]);
+    if result.is_err() {
+        println!("{:#?}", result);
+        println!(
+            "Result for peg-in: {:#?}",
+            rpc.test_mempool_accept(&[peg_in.raw_hex()])
+        );
+        println!(
+            "Result for peg-out: {:#?}",
+            rpc.test_mempool_accept(&[tx.raw_hex()])
+        );
+    } else {
+        let result = result.unwrap();
+        assert!(result[0].allowed, "Peg in transaction failed");
+        assert!(result[1].allowed, "Peg out transaction failed");
+        println!(
+            "Peg In: {:#?}",
+            rpc.send_raw_transaction(peg_in.raw_hex()).unwrap()
+        );
+        println!(
+            "Peg Out: {:#?}",
+            rpc.send_raw_transaction(tx.raw_hex()).unwrap()
+        );
+        println!(
+            "Mined new block: {:#?}",
+            rpc.generate_to_address(1, &address).unwrap()
+        );
+    }
+}
