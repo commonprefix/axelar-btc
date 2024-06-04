@@ -343,31 +343,33 @@ fn main() {
 
     let tx = finalize_psbt(psbt, &committee_keys);
     let result = rpc.test_mempool_accept(&[peg_in.raw_hex(), tx.raw_hex()]);
-    if result.is_err() {
-        println!("{:#?}", result);
-        println!(
-            "Result for peg-in: {:#?}",
-            rpc.test_mempool_accept(&[peg_in.raw_hex()])
-        );
-        println!(
-            "Result for peg-out: {:#?}",
-            rpc.test_mempool_accept(&[tx.raw_hex()])
-        );
-    } else {
-        let result = result.unwrap();
-        assert!(result[0].allowed, "Peg in transaction failed");
-        assert!(result[1].allowed, "Peg out transaction failed");
-        println!(
-            "Peg In: {:#?}",
-            rpc.send_raw_transaction(peg_in.raw_hex()).unwrap()
-        );
-        println!(
-            "Peg Out: {:#?}",
-            rpc.send_raw_transaction(tx.raw_hex()).unwrap()
-        );
-        println!(
-            "Mined new block: {:#?}",
-            rpc.generate_to_address(1, &address).unwrap()
-        );
+    match result {
+        Err(error) => {
+            println!("{:#?}", error);
+            println!(
+                "Result for peg-in: {:#?}",
+                rpc.test_mempool_accept(&[peg_in.raw_hex()])
+            );
+            println!(
+                "Result for peg-out: {:#?}",
+                rpc.test_mempool_accept(&[tx.raw_hex()])
+            );
+        }
+        Ok(response) => {
+            assert!(response[0].allowed, "Peg in transaction failed");
+            assert!(response[1].allowed, "Peg out transaction failed");
+            println!(
+                "Peg In: {:#?}",
+                rpc.send_raw_transaction(peg_in.raw_hex()).unwrap()
+            );
+            println!(
+                "Peg Out: {:#?}",
+                rpc.send_raw_transaction(tx.raw_hex()).unwrap()
+            );
+            println!(
+                "Mined new block: {:#?}",
+                rpc.generate_to_address(1, &address).unwrap()
+            );
+        }
     }
 }
