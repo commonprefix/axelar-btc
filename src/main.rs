@@ -289,21 +289,6 @@ fn init_wallet(rpc: &Client) -> (Address, transaction::Transaction, usize) {
     // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest generatetoaddress 101 <previous_output>
     rpc.generate_to_address(101, &address).unwrap();
 
-    // let coinbase_txid = rpc
-    //     .send_to_address(
-    //         &address,
-    //         Amount::from_int_btc(60),
-    //         None,
-    //         None,
-    //         None,
-    //         None,
-    //         None,
-    //         None,
-    //     )
-    //     .unwrap();
-
-    // rpc.generate_to_address(1, &address).unwrap();
-
     // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest listtransactions "*" 101 100
     let coinbase_txid = rpc
         .list_transactions(Some(random_label), Some(101), Some(100), None)
