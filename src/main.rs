@@ -19,7 +19,9 @@ use bitcoin::{
     Network, Psbt, ScriptBuf, TapLeafHash, XOnlyPublicKey,
 };
 
-const WALLET: &str = "default";
+const DIR: &str = "/home/themicp/.bitcoin/regtest/"; // TODO: don't hardcode this
+const WALLET: &str = "wallets/default";
+const COOKIE: &str = ".cookie";
 
 fn create_op_return() -> ScriptBuf {
     let data = b"ethereum:0x0000000000000000000000000000000000000000:foobar";
@@ -312,9 +314,8 @@ fn main() {
     let _ = fs::remove_dir_all(path::Path::new("/home/themicp/.bitcoin/regtest/wallets/").join(path::Path::new(WALLET))).unwrap();
     let rpc = Client::new(
         "http://127.0.0.1:18443",
-        Auth::CookieFile(PathBuf::from("/home/themicp/.bitcoin/regtest/.cookie")), // TODO: don't hardcode this
-    )
-    .unwrap();
+        Auth::CookieFile(PathBuf::from(&(DIR.to_owned() + COOKIE))), // TODO: don't hardcode this
+    ).unwrap();
     let (address, coinbase_tx, coinbase_vout) = init_wallet(&rpc);
 
     let mut committee_keys = vec![];
