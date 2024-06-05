@@ -4,7 +4,7 @@ use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use num_bigint::BigUint;
 use num_traits::ops::bytes::ToBytes;
 use std::str::FromStr;
-use std::{collections::BTreeMap, path::PathBuf, fs, path};
+use std::{collections::BTreeMap, path::PathBuf};
 
 use bitcoin::{
     amount::Amount,
