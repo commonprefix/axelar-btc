@@ -3,7 +3,6 @@ use bitcoin::Address;
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use num_bigint::BigUint;
 use num_traits::ops::bytes::ToBytes;
-use std::str::FromStr;
 use std::{collections::BTreeMap, path::PathBuf};
 
 use bitcoin::{
@@ -120,7 +119,7 @@ fn create_peg_in_tx(
     );
 
     let tx_out = transaction::TxOut {
-        value: Amount::from_str("49.9999 BTC").unwrap(),
+        value: coinbase_tx.output[0].value - Amount::from_sat(600),
         script_pubkey: tx_script_pubkey.clone(),
     };
 
@@ -195,7 +194,7 @@ fn create_peg_out_tx(
         lock_time: LockTime::ZERO,
         input: vec![peg_out_tx_in],
         output: vec![transaction::TxOut {
-            value: Amount::from_str("49.998 BTC").unwrap(),
+            value: signed_peg_in_tx.output[0].value - Amount::from_sat(600),
             script_pubkey: p2pk,
         }],
     };
