@@ -4,7 +4,7 @@ use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use num_bigint::BigUint;
 use num_traits::ops::bytes::ToBytes;
 use std::str::FromStr;
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf, fs, path};
 
 use bitcoin::{
     amount::Amount,
@@ -18,6 +18,8 @@ use bitcoin::{
     taproot::{LeafVersion, TaprootBuilder},
     Network, Psbt, ScriptBuf, TapLeafHash, XOnlyPublicKey,
 };
+
+const WALLET: &str = "default";
 
 fn create_op_return() -> ScriptBuf {
     let data = b"ethereum:0x0000000000000000000000000000000000000000:foobar";
@@ -273,9 +275,9 @@ fn init_wallet(rpc: &Client) -> (Address, transaction::Transaction, usize) {
     let random_label = random_number.as_str();
 
     let _ = rpc
-        .create_wallet("default", None, None, None, None)
+        .create_wallet(WALLET, None, None, None, None)
         .unwrap();
-    let _ = rpc.load_wallet("default");
+    let _ = rpc.load_wallet(WALLET);
 
     // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest getnewaddress
     let address = rpc
