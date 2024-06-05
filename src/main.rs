@@ -276,9 +276,7 @@ fn init_wallet(rpc: &Client) -> (Address, transaction::Transaction, usize) {
     let random_number = rand::random::<usize>().to_string();
     let random_label = random_number.as_str();
 
-    let _ = rpc
-        .create_wallet(WALLET, None, None, None, None)
-        .unwrap();
+        .create_wallet(WALLET, None, None, None, None);
     let _ = rpc.load_wallet(WALLET);
 
     // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest getnewaddress
