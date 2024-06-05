@@ -309,7 +309,6 @@ fn init_wallet(rpc: &Client) -> (Address, transaction::Transaction, usize) {
 }
 
 fn main() {
-    let _ = fs::remove_dir_all(path::Path::new("/home/user/snap/bitcoin-core/common/.bitcoin/regtest/wallets/").join(path::Path::new(WALLET))).unwrap();
     let rpc = Client::new(
         "http://127.0.0.1:18443",
         Auth::CookieFile(PathBuf::from("/home/themicp/.bitcoin/regtest/.cookie")), // TODO: don't hardcode this
