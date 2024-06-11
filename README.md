@@ -9,9 +9,9 @@ a local (`regtest`) network and accepted by its mempool.
 
 ## Setup
 - Install Bitcoin Core:
-  * Ubuntu: `snap install bitcoin-core` (if it requires other packages, install them first with `apt`)
-  * MacOS: follow the instructions found at [https://bitcoin.org/en/full-node#osx-daemon](https://bitcoin.org/en/full-node#osx-daemon)
-- From a terminal, clone this repo: `git clone git@github.com:commonprefix/axelar-btc.git`
+  * Ubuntu: `snap install bitcoin-core` (If it requires other packages, install them first with `apt`.)
+  * MacOS: follow the instructions found at [https://bitcoin.org/en/full-node#osx-daemon](https://bitcoin.org/en/full-node#osx-daemon).
+- From a terminal, clone this repo: `git clone git@github.com:commonprefix/axelar-btc.git`.
 
 ## Execution
 - Start a Bitcoin Core daemon:
@@ -20,7 +20,7 @@ a local (`regtest`) network and accepted by its mempool.
 - Copy the directory where your `.cookie` is stored:
   * Ubuntu: `/home/<username>/snap/bitcoin-core/common/.bitcoin/regtest/`
   * MacOS: `/home/<username>/.bitcoin/regtest/`
-- Open a new terminal and navigate to the directory where this repo was cloned before
-- Replace the path in the string of line 21 of`src/main.rs` with the previously copied `.cookie` directory and save the file
-- Execute `cargo run`
-- The peg-in and peg-out transactions, along with a block that includes them, are printed
+- Open a new terminal and navigate to the directory where this repo was cloned before.
+- Replace the path in the string of line 21 of`src/main.rs` with the previously copied `.cookie` directory and save the file.
+- `cargo run`
+- The peg-in and peg-out transactions, along with a block that includes them, are printed.
