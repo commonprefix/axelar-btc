@@ -3,7 +3,7 @@ use bitcoin::Address;
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use num_bigint::BigUint;
 use num_traits::ops::bytes::ToBytes;
-use std::{cmp, collections::BTreeMap, path::PathBuf};
+use std::{cmp, collections::BTreeMap, env, path::PathBuf};
 
 use bitcoin::{
     amount::Amount,
@@ -15,7 +15,6 @@ use bitcoin::{
     Network, Psbt, ScriptBuf, TapLeafHash, XOnlyPublicKey,
 };
 
-const DIR: &str = "/home/themicp/.bitcoin/regtest/"; // TODO: don't hardcode this
 const WALLET: &str = "wallets/default";
 const COOKIE: &str = ".cookie";
 
@@ -261,12 +260,12 @@ fn finalize_psbt(mut psbt: Psbt, committee_keys: &Vec<Xpriv>) -> transaction::Tr
     psbt.extract_tx().unwrap()
 }
 
-fn init_wallet(rpc: &Client) -> (Address, transaction::Transaction, usize) {
+fn init_wallet(bitcoin_dir: &String, rpc: &Client) -> (Address, transaction::Transaction, usize) {
     let random_number = rand::random::<usize>().to_string();
     let random_label = random_number.as_str();
 
-    let _ = rpc.create_wallet(&(DIR.to_owned() + WALLET), None, None, None, None);
-    let _ = rpc.load_wallet(&(DIR.to_owned() + WALLET));
+    let _ = rpc.create_wallet(&(bitcoin_dir.to_owned() + WALLET), None, None, None, None);
+    let _ = rpc.load_wallet(&(bitcoin_dir.to_owned() + WALLET));
 
     // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest getnewaddress
     let address = rpc
@@ -298,12 +297,19 @@ fn init_wallet(rpc: &Client) -> (Address, transaction::Transaction, usize) {
 }
 
 fn main() {
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        eprintln!("Usage: cargo run <bitcoin_directory>");
+        std::process::exit(1);
+    }
+    let bitcoin_dir = args[1].to_owned() + "/regtest/";
+
     let rpc = Client::new(
         "http://127.0.0.1:18443",
-        Auth::CookieFile(PathBuf::from(&(DIR.to_owned() + COOKIE))), // TODO: don't hardcode this
+        Auth::CookieFile(PathBuf::from(&(bitcoin_dir.to_owned() + COOKIE))), // TODO: don't hardcode this
     )
     .unwrap();
-    let (address, coinbase_tx, coinbase_vout) = init_wallet(&rpc);
+    let (address, coinbase_tx, coinbase_vout) = init_wallet(&bitcoin_dir, &rpc);
 
     let mut committee_keys = vec![];
     for i in 0..COMMITTEE_SIZE {
