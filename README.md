@@ -1,11 +1,11 @@
-# Peg-in & Peg-out transactions Demo
+# Peg-in & Peg-out Transactions Demo
 
 We provide an example of the peg-in transaction, by which a user moves its
 coins to the Axelar validators' output, along with an example of the peg-out
 transaction, with which the Axelar validators unlock previously pegged-in
-bitcoins. These transactions are valid and would be accepted by the Bitcoin
+BTC. These transactions are valid and would be accepted by the Bitcoin
 network. To verify this, they are passed to a running Bitcoin Core daemon set to
-a local (`regtest`) network and accepted by its mempool.
+a local (`regtest`) network and tested for acceptance by its mempool.
 
 ## Setup
 - Install Bitcoin Core:
@@ -24,3 +24,6 @@ a local (`regtest`) network and accepted by its mempool.
 - Replace the path in the string of line 21 of`src/main.rs` with the previously copied `.cookie` directory and save the file.
 - `cargo run`
 - The peg-in and peg-out transactions, along with a block that includes them, are printed.
+
+## References
+The script is inspired by: https://gist.github.com/mappum/da11e37f4e90891642a52621594d03f6
