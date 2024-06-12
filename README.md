@@ -18,7 +18,9 @@ a local (`regtest`) network and tested for acceptance by its mempool.
   * Ubuntu: `bitcoin-core.daemon -chain=regtest`
   * MacOS: `bitcoind -daemon -chain=regtest`
 - Open a new terminal and navigate to the directory where this repo was cloned before.
-- `cargo run <path to .bitcoin directory>`
+- `cargo run <path to .bitcoin directory>`. Example paths:
+  * Ubuntu: `/home/<username>/snap/bitcoin-core/common/`
+  * MacOS: `/home/<username>/`
 - The peg-in and peg-out transactions, along with a block that includes them, are printed.
 
 ## References
