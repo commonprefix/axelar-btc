@@ -3,17 +3,14 @@ use bitcoin::Address;
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use num_bigint::BigUint;
 use num_traits::ops::bytes::ToBytes;
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{cmp, collections::BTreeMap, path::PathBuf};
 
 use bitcoin::{
     amount::Amount,
     bip32::{DerivationPath, KeySource, Xpriv, Xpub},
     blockdata::{locktime::absolute::LockTime, script, transaction, witness::Witness},
     key::{Secp256k1, UntweakedPublicKey},
-    opcodes::all::{
-        OP_ADD, OP_CHECKSIG, OP_DROP, OP_DUP, OP_ELSE, OP_ENDIF, OP_EQUAL, OP_GREATERTHANOREQUAL,
-        OP_IF, OP_SWAP,
-    },
+    opcodes::all::{OP_ADD, OP_CHECKSIG, OP_ELSE, OP_ENDIF, OP_GREATERTHANOREQUAL, OP_IF, OP_SWAP},
     taproot::{LeafVersion, TaprootBuilder},
     Network, Psbt, ScriptBuf, TapLeafHash, XOnlyPublicKey,
 };
@@ -29,16 +26,10 @@ fn create_op_return() -> ScriptBuf {
 
 fn create_multisig_script(committee_keys: &Vec<Xpriv>) -> ScriptBuf {
     let secp = Secp256k1::new();
-    let mut script = script::Builder::new().push_int(0);
+    let mut script = script::Builder::new().push_int(0); // TODO: the first signature could initialize the accumulator
     for i in 0..committee_keys.len() {
         script = script
             .push_opcode(OP_SWAP)
-            .push_opcode(OP_DUP)
-            .push_int(0)
-            .push_opcode(OP_EQUAL)
-            .push_opcode(OP_IF) // IF empty signature
-            .push_opcode(OP_DROP) // drop empty signature
-            .push_opcode(OP_ELSE) // ELSE verify non-empty signature
             .push_x_only_key(
                 &committee_keys[committee_keys.len() - 1 - i]
                     .to_keypair(&secp)
@@ -52,8 +43,7 @@ fn create_multisig_script(committee_keys: &Vec<Xpriv>) -> ScriptBuf {
             .push_opcode(OP_ELSE)
             .push_int(0)
             .push_opcode(OP_ENDIF) // ENDIF valid signature
-            .push_opcode(OP_ADD)
-            .push_opcode(OP_ENDIF); // ENDIF empty signature
+            .push_opcode(OP_ADD);
     }
     script = script.push_int(2).push_opcode(OP_GREATERTHANOREQUAL);
 
@@ -194,7 +184,7 @@ fn create_peg_out_tx(
         lock_time: LockTime::ZERO,
         input: vec![peg_out_tx_in],
         output: vec![transaction::TxOut {
-            value: signed_peg_in_tx.output[0].value - Amount::from_sat(600),
+            value: signed_peg_in_tx.output[0].value - Amount::from_sat(5000),
             script_pubkey: p2pk,
         }],
     };
@@ -242,7 +232,7 @@ fn finalize_psbt(mut psbt: Psbt, committee_keys: &Vec<Xpriv>) -> transaction::Tr
         .unwrap();
 
     let mut script_witness = Witness::new();
-    for i in 0..COMMITTEE_SIZE {
+    for i in 0..committee_keys.len() {
         let signature_option = psbt.inputs[0].tap_script_sigs.get(&(
             committee_keys[i].to_keypair(&secp).x_only_public_key().0,
             script.tapscript_leaf_hash(),
@@ -311,7 +301,8 @@ fn main() {
     let rpc = Client::new(
         "http://127.0.0.1:18443",
         Auth::CookieFile(PathBuf::from(&(DIR.to_owned() + COOKIE))), // TODO: don't hardcode this
-    ).unwrap();
+    )
+    .unwrap();
     let (address, coinbase_tx, coinbase_vout) = init_wallet(&rpc);
 
     let mut committee_keys = vec![];
@@ -321,7 +312,8 @@ fn main() {
 
     let peg_in = create_peg_in_tx(&coinbase_tx, &coinbase_vout, &committee_keys, &rpc);
     let mut psbt = create_peg_out_tx(&peg_in, &committee_keys, 0);
-    for i in 1..COMMITTEE_SIZE {
+    let signers_count = cmp::min(COMMITTEE_SIZE - 1, 50);
+    for i in 1..signers_count {
         let current_psbt = create_peg_out_tx(&peg_in, &committee_keys, i);
         psbt.combine(current_psbt).unwrap();
     }
@@ -331,14 +323,9 @@ fn main() {
     match result {
         Err(error) => {
             println!("{:#?}", error);
-            println!(
-                "Result for peg-in: {:#?}",
-                rpc.test_mempool_accept(&[peg_in.raw_hex()])
-            );
-            println!(
-                "Result for peg-out: {:#?}",
-                rpc.test_mempool_accept(&[tx.raw_hex()])
-            );
+            println!("Mempool acceptance test failed. Try manually testing for mempool acceptance using the bitcoin cli for more information, with the following transactions:");
+            println!("Peg in: {}", peg_in.raw_hex());
+            println!("Peg out: {}", tx.raw_hex());
         }
         Ok(response) => {
             assert!(response[0].allowed, "Peg in transaction failed");
