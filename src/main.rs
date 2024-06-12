@@ -40,7 +40,7 @@ fn create_multisig_script(committee_keys: &Vec<Xpriv>) -> ScriptBuf {
             .push_opcode(OP_DROP) // drop empty signature
             .push_opcode(OP_ELSE) // ELSE verify non-empty signature
             .push_x_only_key(
-                &committee_keys[COMMITTEE_SIZE - 1 - i]
+                &committee_keys[committee_keys.len() - 1 - i]
                     .to_keypair(&secp)
                     .x_only_public_key()
                     .0,
