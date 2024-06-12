@@ -23,5 +23,7 @@ a local (`regtest`) network and tested for acceptance by its mempool.
   * MacOS: `/home/<username>/.bitcoin/`
 - The peg-in and peg-out transactions, along with a block that includes them, are printed.
 
-## References
-The script is inspired by: https://gist.github.com/mappum/da11e37f4e90891642a52621594d03f6
+## Acknowledgements
+- The Bitcoin Script used for this demo is inspired by: https://gist.github.com/mappum/da11e37f4e90891642a52621594d03f6
+- [rust-bitcoin](https://github.com/rust-bitcoin/rust-bitcoin) was used to construct and sign Bitcoin transactions.
+- [rust-bitcoincore-rpc](https://github.com/rust-bitcoin/rust-bitcoincore-rpc) was used to communicate with the local Bitcoin regtest RPC.
