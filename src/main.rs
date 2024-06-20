@@ -1,11 +1,13 @@
-use bitcoin::secp256k1::{Message, PublicKey};
+use axelar_btc::{
+    create_multisig_script, create_op_return, create_unspendable_internal_key, init_wallet,
+};
+use bitcoin::key::Secp256k1;
+use bitcoin::secp256k1::{All, Message, PublicKey};
+use bitcoin::sighash::SighashCache;
 use bitcoin::sighash::{Prevouts, ScriptPath};
-use bitcoin::{key::rand, sighash::SighashCache};
-use bitcoin::{Address, TapSighash, TapSighashType};
+use bitcoin::{TapSighash, TapSighashType, TxOut, Txid};
 use bitcoin_hashes::Hash;
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
-use num_bigint::BigUint;
-use num_traits::ops::bytes::ToBytes;
 use std::collections::HashMap;
 use std::{env, path::PathBuf};
 
@@ -13,248 +15,168 @@ use bitcoin::{
     amount::Amount,
     bip32::Xpriv,
     blockdata::{locktime::absolute::LockTime, script, transaction, witness::Witness},
-    key::{Secp256k1, UntweakedPublicKey},
-    opcodes::all::{OP_ADD, OP_CHECKSIG, OP_ELSE, OP_ENDIF, OP_GREATERTHANOREQUAL, OP_IF, OP_SWAP},
     taproot::{LeafVersion, Signature, TaprootBuilder},
     Network, ScriptBuf, XOnlyPublicKey,
 };
 
 const WALLET: &str = "wallets/default";
 const COOKIE: &str = ".cookie";
-const COMMITTEE_SIZE: usize = 75;
+const COMMITTEE_SIZE: usize = 2;
 const NETWORK: Network = Network::Regtest;
 
-fn create_op_return() -> ScriptBuf {
-    let data = b"ethereum:0x0000000000000000000000000000000000000000:foobar";
-    ScriptBuf::new_op_return(data)
+struct UTXO {
+    txid: Txid,
+    txout: TxOut,
+    vout: u32,
 }
 
-fn create_multisig_script(committee_keys: &Vec<Xpriv>) -> (ScriptBuf, ScriptBuf) {
-    let secp = Secp256k1::new();
-    let mut builder = script::Builder::new().push_int(0); // TODO: the first signature could initialize the accumulator
-    for i in 0..committee_keys.len() {
-        builder = builder
-            .push_opcode(OP_SWAP)
-            .push_x_only_key(
-                &committee_keys[committee_keys.len() - 1 - i]
-                    .to_keypair(&secp)
-                    .x_only_public_key()
-                    .0,
+struct User {}
+
+struct Validator {
+    key: Xpriv,
+}
+
+struct MultisigProver {}
+
+impl User {
+    fn deposit(input: UTXO, script_pubkey: &ScriptBuf, rpc: &Client) -> transaction::Transaction {
+        let tx_in = transaction::TxIn {
+            previous_output: transaction::OutPoint {
+                txid: input.txid,
+                vout: u32::try_from(input.vout).unwrap(),
+            },
+            script_sig: script::ScriptBuf::new(),
+            sequence: transaction::Sequence::MAX,
+            witness: Witness::new(),
+        };
+
+        let tx_out = transaction::TxOut {
+            value: input.txout.value - Amount::from_sat(600),
+            script_pubkey: script_pubkey.clone(),
+        };
+
+        let op_return_out = transaction::TxOut {
+            value: Amount::ZERO,
+            script_pubkey: create_op_return(),
+        };
+
+        let unsigned_tx = transaction::Transaction {
+            version: transaction::Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![tx_in],
+            output: vec![tx_out.clone(), op_return_out],
+        };
+
+        let signed_raw_transaction = rpc
+            .sign_raw_transaction_with_wallet(&unsigned_tx, None, None)
+            .unwrap();
+        if !signed_raw_transaction.complete {
+            println!("{:#?}", signed_raw_transaction.errors);
+            panic!("Transaction couldn't be signed.")
+        }
+        signed_raw_transaction.transaction().unwrap()
+    }
+}
+
+impl MultisigProver {
+    fn create_peg_out_tx(
+        inputs: Vec<UTXO>,
+        fee: Amount,
+        receiver_pubkey: &PublicKey,
+        script: &ScriptBuf,
+    ) -> (transaction::Transaction, TapSighash) {
+        // Build peg-out tx that spends peg-in tx
+        // TODO: iterate over the inputs
+        let peg_out_tx_in = transaction::TxIn {
+            previous_output: transaction::OutPoint {
+                txid: inputs[0].txid,
+                vout: inputs[0].vout,
+            },
+            script_sig: script::ScriptBuf::new(),
+            sequence: transaction::Sequence::MAX,
+            witness: Witness::default(),
+        };
+
+        let p2pk = ScriptBuf::new_p2pk(&(*receiver_pubkey).into());
+
+        let unsigned_peg_out_tx = transaction::Transaction {
+            version: transaction::Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![peg_out_tx_in],
+            output: vec![transaction::TxOut {
+                value: inputs[0].txout.value - fee,
+                script_pubkey: p2pk,
+            }],
+        };
+
+        // Create sighash of peg out transaction to pass it around the validators for signing
+        let mut cloned_tx = unsigned_peg_out_tx.clone();
+        let mut sighash_cache = SighashCache::new(&mut cloned_tx);
+        let sighash = sighash_cache
+            .taproot_script_spend_signature_hash(
+                0,
+                &Prevouts::All(&[inputs[0].txout.clone()]),
+                ScriptPath::with_defaults(&script),
+                TapSighashType::Default,
             )
-            .push_opcode(OP_CHECKSIG)
-            .push_opcode(OP_IF)
-            // Each committee member has weight equal to its index + 1
-            .push_int(1)
-            .push_opcode(OP_ELSE)
-            .push_int(0)
-            .push_opcode(OP_ENDIF) // ENDIF valid signature
-            .push_opcode(OP_ADD);
+            .unwrap();
+
+        return (unsigned_peg_out_tx, sighash);
     }
-    builder = builder.push_int(2).push_opcode(OP_GREATERTHANOREQUAL);
-    let script = builder.into_script();
 
-    let internal_key = create_unspendable_internal_key();
-    let taproot_spend_info = TaprootBuilder::new()
-        .add_leaf(0, script.clone())
-        .unwrap()
-        .finalize(&secp, internal_key)
-        .unwrap();
+    fn finalize_tx_witness(
+        mut tx: transaction::Transaction,
+        committee_signatures: &HashMap<usize, Signature>,
+        script: &ScriptBuf,
+        internal_key: &XOnlyPublicKey,
+        secp: &Secp256k1<All>,
+    ) -> transaction::Transaction {
+        let peg_in_taproot_spend_info = TaprootBuilder::new()
+            .add_leaf(0, script.clone())
+            .unwrap()
+            .finalize(&secp, internal_key.clone())
+            .unwrap();
 
-    let script_pubkey = script::ScriptBuf::new_p2tr(
-        &secp,
-        taproot_spend_info.internal_key(),
-        taproot_spend_info.merkle_root(),
-    );
+        let control_block = peg_in_taproot_spend_info
+            .control_block(&(script.clone(), LeafVersion::TapScript))
+            .unwrap();
 
-    (script, script_pubkey)
-}
+        // add signatures in the correct order, fill in missing signatures with an empty vector
+        for i in 0..COMMITTEE_SIZE {
+            let signature_option = committee_signatures.get(&(COMMITTEE_SIZE - i - 1));
+            if let Some(signature) = signature_option {
+                tx.input[0].witness.push(signature.to_vec());
+            } else {
+                tx.input[0].witness.push(&[]);
+            }
+        }
 
-fn create_unspendable_internal_key() -> XOnlyPublicKey {
-    // the Gx of SECP, incremented till a valid x is found
-    // See
-    // https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki#constructing-and-spending-taproot-outputs,
-    // bullet 3, for a proper way to choose such a key
-    let nothing_up_my_sleeve_key = [
-        0x79, 0xBE, 0x66, 0x7E, 0xF9, 0xDC, 0xBB, 0xAC, 0x55, 0xA0, 0x62, 0x95, 0xCE, 0x87, 0x0B,
-        0x07, 0x02, 0x9B, 0xFC, 0xDB, 0x2D, 0xCE, 0x28, 0xD9, 0x59, 0xF2, 0x81, 0x5B, 0x16, 0xF8,
-        0x17, 0x99,
-    ];
-    let mut int_key = BigUint::from_bytes_be(&nothing_up_my_sleeve_key);
-    while let Err(_) = UntweakedPublicKey::from_slice(&int_key.to_be_bytes()) {
-        int_key += 1u32;
-    }
-    let internal_key = UntweakedPublicKey::from_slice(&int_key.to_be_bytes()).unwrap();
+        tx.input[0].witness.push(script.to_bytes());
+        tx.input[0].witness.push(control_block.serialize());
 
-    internal_key
-}
-
-fn create_peg_in_tx(
-    coinbase_tx: &transaction::Transaction,
-    coinbase_vout: &usize,
-    committee_keys: &Vec<Xpriv>,
-    rpc: &Client,
-) -> transaction::Transaction {
-    let tx_in = transaction::TxIn {
-        previous_output: transaction::OutPoint {
-            txid: coinbase_tx.compute_txid(),
-            vout: u32::try_from(*coinbase_vout).unwrap(),
-        },
-        script_sig: script::ScriptBuf::new(),
-        sequence: transaction::Sequence::MAX,
-        witness: Witness::new(),
-    };
-
-    let (_, script_pubkey) = create_multisig_script(&committee_keys);
-
-    let tx_out = transaction::TxOut {
-        value: coinbase_tx.output[0].value - Amount::from_sat(600),
-        script_pubkey: script_pubkey,
-    };
-
-    let op_return_out = transaction::TxOut {
-        value: Amount::ZERO,
-        script_pubkey: create_op_return(),
-    };
-
-    let unsigned_tx = transaction::Transaction {
-        version: transaction::Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![tx_in],
-        output: vec![tx_out.clone(), op_return_out],
-    };
-
-    let signed_raw_transaction = rpc
-        .sign_raw_transaction_with_wallet(&unsigned_tx, None, None)
-        .unwrap();
-    if !signed_raw_transaction.complete {
-        println!("{:#?}", signed_raw_transaction.errors);
-        panic!("Transaction couldn't be signed.")
-    }
-    signed_raw_transaction.transaction().unwrap()
-}
-
-fn create_peg_out_tx(
-    signed_peg_in_tx: &transaction::Transaction,
-    committee_keys: &Vec<Xpriv>,
-    receiver_pubkey: &PublicKey,
-) -> (transaction::Transaction, TapSighash) {
-    let (script, _) = create_multisig_script(&committee_keys);
-
-    // Build peg-out tx that spends peg-in tx
-    let peg_out_tx_in = transaction::TxIn {
-        previous_output: transaction::OutPoint {
-            txid: signed_peg_in_tx.compute_txid(),
-            vout: 0,
-        },
-        script_sig: script::ScriptBuf::new(),
-        sequence: transaction::Sequence::MAX,
-        witness: Witness::default(),
-    };
-
-    let p2pk = ScriptBuf::new_p2pk(&(*receiver_pubkey).into());
-
-    let unsigned_peg_out_tx = transaction::Transaction {
-        version: transaction::Version::TWO,
-        lock_time: LockTime::ZERO,
-        input: vec![peg_out_tx_in],
-        output: vec![transaction::TxOut {
-            value: signed_peg_in_tx.output[0].value - Amount::from_sat(5000),
-            script_pubkey: p2pk,
-        }],
-    };
-
-    // Create sighash of peg out transaction to pass it around the validators for signing
-    let mut cloned_tx = unsigned_peg_out_tx.clone();
-    let mut sighash_cache = SighashCache::new(&mut cloned_tx);
-    let sighash = sighash_cache
-        .taproot_script_spend_signature_hash(
-            0,
-            &Prevouts::All(&[signed_peg_in_tx.output[0].clone()]),
-            ScriptPath::with_defaults(&script),
-            TapSighashType::Default,
-        )
-        .unwrap();
-
-    return (unsigned_peg_out_tx, sighash);
-}
-
-fn sign_sighash(sighash: &TapSighash, key: &Xpriv) -> Signature {
-    let secp = Secp256k1::new();
-    let msg = Message::from_digest_slice(&sighash.to_byte_array()).unwrap();
-
-    Signature {
-        signature: secp.sign_schnorr(&msg, &key.to_keypair(&secp)),
-        sighash_type: TapSighashType::Default,
+        tx
     }
 }
 
-fn finalize_tx_witness(
-    tx: &mut transaction::Transaction,
-    committee_signatures: &HashMap<usize, Signature>,
-    committee_keys: &Vec<Xpriv>,
-) -> () {
-    let secp = Secp256k1::new();
-    let (script, _) = create_multisig_script(&committee_keys);
-    let internal_key = create_unspendable_internal_key();
-
-    let peg_in_taproot_spend_info = TaprootBuilder::new()
-        .add_leaf(0, script.clone())
-        .unwrap()
-        .finalize(&secp, internal_key)
-        .unwrap();
-
-    let control_block = peg_in_taproot_spend_info
-        .control_block(&(script.clone(), LeafVersion::TapScript))
-        .unwrap();
-
-    // add signatures in the correct order, fill in missing signatures with an empty vector
-    for i in 0..COMMITTEE_SIZE {
-        let signature_option = committee_signatures.get(&i);
-        if let Some(signature) = signature_option {
-            tx.input[0].witness.push(signature.to_vec());
-        } else {
-            tx.input[0].witness.push(&[]);
+impl Validator {
+    fn new(seed: usize) -> Self {
+        Validator {
+            key: Xpriv::new_master(NETWORK, &[seed.try_into().unwrap()]).unwrap(),
         }
     }
 
-    tx.input[0].witness.push(script.to_bytes());
-    tx.input[0].witness.push(control_block.serialize());
-}
+    fn public_key(&self, secp: &Secp256k1<All>) -> XOnlyPublicKey {
+        self.key.to_keypair(&secp).x_only_public_key().0
+    }
 
-fn init_wallet(bitcoin_dir: &String, rpc: &Client) -> (Address, transaction::Transaction, usize) {
-    let random_number = rand::random::<usize>().to_string();
-    let random_label = random_number.as_str();
+    fn sign_sighash(&self, sighash: &TapSighash, secp: &Secp256k1<All>) -> Signature {
+        let msg = Message::from_digest_slice(&sighash.to_byte_array()).unwrap();
 
-    let _ = rpc.create_wallet(&(bitcoin_dir.to_owned() + WALLET), None, None, None, None);
-    let _ = rpc.load_wallet(&(bitcoin_dir.to_owned() + WALLET));
-
-    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest getnewaddress
-    let address = rpc
-        .get_new_address(Some(random_label), None)
-        .unwrap()
-        .require_network(NETWORK)
-        .unwrap();
-
-    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest generatetoaddress 101 <previous_output>
-    rpc.generate_to_address(101, &address).unwrap();
-
-    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest listtransactions "*" 101 100
-    let coinbase_txid = rpc
-        .list_transactions(Some(random_label), Some(101), Some(100), None)
-        .unwrap()[0]
-        .info
-        .txid;
-
-    // $ bitcoin-core.cli -rpcport=18443 -rpcpassword=1234 -regtest gettransaction <txid> true true
-    let coinbase_tx = rpc
-        .get_transaction(&coinbase_txid, None)
-        .unwrap()
-        .transaction()
-        .unwrap();
-
-    let coinbase_vout = 0;
-
-    (address, coinbase_tx, coinbase_vout)
+        Signature {
+            signature: secp.sign_schnorr(&msg, &self.key.to_keypair(&secp)),
+            sighash_type: TapSighashType::Default,
+        }
+    }
 }
 
 fn main() {
@@ -265,38 +187,71 @@ fn main() {
     }
     let bitcoin_dir = args[1].to_owned() + "/regtest/";
 
-    let secp = Secp256k1::new();
+    // Initialize RPC
     let rpc = Client::new(
         "http://127.0.0.1:18443",
         Auth::CookieFile(PathBuf::from(&(bitcoin_dir.to_owned() + COOKIE))), // TODO: don't hardcode this
     )
     .unwrap();
-    let (address, coinbase_tx, coinbase_vout) = init_wallet(&bitcoin_dir, &rpc);
+    let (address, coinbase_tx, coinbase_vout) = init_wallet(&bitcoin_dir, &rpc, NETWORK, WALLET);
 
-    // Create keys for the multisig committee
-    let mut committee_keys = vec![];
+    // Create validators
+    let mut validators = vec![];
     for i in 0..COMMITTEE_SIZE {
-        committee_keys.push(Xpriv::new_master(NETWORK, &[i.try_into().unwrap()]).unwrap());
+        validators.push(Validator::new(i));
     }
 
+    // Store the public keys of the validators
+    let secp = Secp256k1::new();
+    let mut validators_pks = vec![];
+    for i in 0..validators.len() {
+        validators_pks.push(validators[i].public_key(&secp));
+    }
+
+    // Create the multisig bitcoin script and an internal unspendable key
+    let internal_key = create_unspendable_internal_key();
+    let (script, script_pubkey) =
+        create_multisig_script(&validators_pks, internal_key.clone(), &secp);
+
     // Create deposit transaction
-    let peg_in = create_peg_in_tx(&coinbase_tx, &coinbase_vout, &committee_keys, &rpc);
+    let user_utxo = UTXO {
+        txid: coinbase_tx.compute_txid(),
+        vout: coinbase_vout,
+        txout: coinbase_tx.output[0].clone(),
+    };
+    let peg_in = User::deposit(user_utxo, &script_pubkey, &rpc);
 
     // Create key for recipient of withdrawal
     let receiver_key = Xpriv::new_master(NETWORK, &[0]).unwrap();
     let receiver_pubkey = receiver_key.to_keypair(&secp).public_key();
 
     // Create withdrawal transaction
-    let (mut peg_out, sighash) = create_peg_out_tx(&peg_in, &committee_keys, &receiver_pubkey);
+    let multisig_utxo = UTXO {
+        txid: peg_in.compute_txid(),
+        vout: 0,
+        txout: peg_in.output[0].clone(),
+    };
+    let (unsigned_peg_out, sighash) = MultisigProver::create_peg_out_tx(
+        vec![multisig_utxo],
+        Amount::from_sat(5000),
+        &receiver_pubkey,
+        &script,
+    );
 
     // Get signatures for the withdrawal from each member of the committee
     let mut committee_signatures: HashMap<usize, Signature> = HashMap::new();
     for i in 0..COMMITTEE_SIZE {
-        committee_signatures.insert(i, sign_sighash(&sighash, &committee_keys[i]));
+        committee_signatures.insert(i, validators[i].sign_sighash(&sighash, &secp));
     }
 
     // Fill in missing signatures and add control block, finalize witness
-    finalize_tx_witness(&mut peg_out, &committee_signatures, &committee_keys);
+    let peg_out = MultisigProver::finalize_tx_witness(
+        unsigned_peg_out,
+        &committee_signatures,
+        &script,
+        &internal_key,
+        &secp,
+    );
 
     // Test if the peg in and peg out transactions will be accepted from the mempool
     let result = rpc.test_mempool_accept(&[peg_in.raw_hex(), peg_out.raw_hex()]);
