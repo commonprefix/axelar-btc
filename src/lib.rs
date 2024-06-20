@@ -6,7 +6,7 @@ use bitcoin::{
     taproot::TaprootBuilder,
     transaction, Address, Network, ScriptBuf, XOnlyPublicKey,
 };
-use bitcoincore_rpc::{Client, RpcApi};
+use bitcoincore_rpc::{Client, RawTx, RpcApi};
 use num_bigint::BigUint;
 use num_traits::ops::bytes::ToBytes;
 
@@ -110,4 +110,46 @@ pub fn init_wallet(
     let coinbase_vout = 0;
 
     (address, coinbase_tx, coinbase_vout)
+}
+
+pub fn test_and_submit(
+    rpc: &Client,
+    txs: [transaction::Transaction; 2],
+    miner_address: Address,
+) -> () {
+    let peg_in = txs[0].clone();
+    let peg_out = txs[1].clone();
+    let result = rpc.test_mempool_accept(&[peg_in.raw_hex(), peg_out.raw_hex()]);
+
+    let mempool_failure = || {
+        println!("Mempool acceptance test failed. Try manually testing for mempool acceptance using the bitcoin cli for more information, with the following transactions:");
+        println!("Peg in: {}", peg_in.raw_hex());
+        println!("Peg out: {}", peg_out.raw_hex());
+    };
+
+    match result {
+        Err(error) => {
+            println!("{:#?}", error);
+            mempool_failure();
+        }
+        Ok(response) => {
+            if !response[0].allowed || !response[1].allowed {
+                mempool_failure();
+                return;
+            }
+
+            println!(
+                "Peg In: {:#?}",
+                rpc.send_raw_transaction(peg_in.raw_hex()).unwrap()
+            );
+            println!(
+                "Peg Out: {:#?}",
+                rpc.send_raw_transaction(peg_out.raw_hex()).unwrap()
+            );
+            println!(
+                "Mined new block: {:#?}",
+                rpc.generate_to_address(1, &miner_address).unwrap()
+            );
+        }
+    }
 }

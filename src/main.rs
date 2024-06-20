@@ -1,5 +1,6 @@
 use axelar_btc::{
     create_multisig_script, create_op_return, create_unspendable_internal_key, init_wallet,
+    test_and_submit,
 };
 use bitcoin::key::Secp256k1;
 use bitcoin::secp256k1::{All, Message, PublicKey};
@@ -7,7 +8,7 @@ use bitcoin::sighash::SighashCache;
 use bitcoin::sighash::{Prevouts, ScriptPath};
 use bitcoin::{TapSighash, TapSighashType, TxOut, Txid};
 use bitcoin_hashes::Hash;
-use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
+use bitcoincore_rpc::{Auth, Client, RpcApi};
 use std::collections::HashMap;
 use std::{env, path::PathBuf};
 
@@ -213,7 +214,7 @@ fn main() {
     let (script, script_pubkey) =
         create_multisig_script(&validators_pks, internal_key.clone(), &secp);
 
-    // Create deposit transaction
+    // User: creates a deposit transaction
     let user_utxo = UTXO {
         txid: coinbase_tx.compute_txid(),
         vout: coinbase_vout,
@@ -225,7 +226,7 @@ fn main() {
     let receiver_key = Xpriv::new_master(NETWORK, &[0]).unwrap();
     let receiver_pubkey = receiver_key.to_keypair(&secp).public_key();
 
-    // Create withdrawal transaction
+    // MultisigProver: Creates an unsigned withdrawal transaction
     let multisig_utxo = UTXO {
         txid: peg_in.compute_txid(),
         vout: 0,
@@ -244,7 +245,7 @@ fn main() {
         committee_signatures.insert(i, validators[i].sign_sighash(&sighash, &secp));
     }
 
-    // Fill in missing signatures and add control block, finalize witness
+    // MultisigProver: Collect signatures, fill in missing signatures, add control block and finalize witness
     let peg_out = MultisigProver::finalize_tx_witness(
         unsigned_peg_out,
         &committee_signatures,
@@ -253,36 +254,6 @@ fn main() {
         &secp,
     );
 
-    // Test if the peg in and peg out transactions will be accepted from the mempool
-    let result = rpc.test_mempool_accept(&[peg_in.raw_hex(), peg_out.raw_hex()]);
-
-    match result {
-        Err(error) => {
-            println!("{:#?}", error);
-            println!("Mempool acceptance test failed. Try manually testing for mempool acceptance using the bitcoin cli for more information, with the following transactions:");
-            println!("Peg in: {}", peg_in.raw_hex());
-            println!("Peg out: {}", peg_out.raw_hex());
-        }
-        Ok(response) => {
-            if !response[0].allowed || !response[1].allowed {
-                println!("Mempool acceptance test failed. Try manually testing for mempool acceptance using the bitcoin cli for more information, with the following transactions:");
-                println!("Peg in: {}", peg_in.raw_hex());
-                println!("Peg out: {}", peg_out.raw_hex());
-                return;
-            }
-
-            println!(
-                "Peg In: {:#?}",
-                rpc.send_raw_transaction(peg_in.raw_hex()).unwrap()
-            );
-            println!(
-                "Peg Out: {:#?}",
-                rpc.send_raw_transaction(peg_out.raw_hex()).unwrap()
-            );
-            println!(
-                "Mined new block: {:#?}",
-                rpc.generate_to_address(1, &address).unwrap()
-            );
-        }
-    }
+    // Test peg in and peg out transactions for mempool acceptance and submit them
+    test_and_submit(&rpc, [peg_in, peg_out], address);
 }
