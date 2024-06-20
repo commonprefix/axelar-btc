@@ -40,7 +40,7 @@ struct Validator {
 struct MultisigProver {}
 
 impl User {
-    fn deposit(input: UTXO, script_pubkey: &ScriptBuf, rpc: &Client) -> transaction::Transaction {
+    fn peg_in(input: UTXO, script_pubkey: &ScriptBuf, rpc: &Client) -> transaction::Transaction {
         let tx_in = transaction::TxIn {
             previous_output: transaction::OutPoint {
                 txid: input.txid,
@@ -220,7 +220,7 @@ fn main() {
         vout: coinbase_vout,
         txout: coinbase_tx.output[0].clone(),
     };
-    let peg_in = User::deposit(user_utxo, &script_pubkey, &rpc);
+    let peg_in = User::peg_in(user_utxo, &script_pubkey, &rpc);
 
     // Create key for recipient of withdrawal
     let receiver_key = Xpriv::new_master(NETWORK, &[0]).unwrap();
