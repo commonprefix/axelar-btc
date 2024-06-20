@@ -296,6 +296,76 @@ fn init_wallet(bitcoin_dir: &String, rpc: &Client) -> (Address, transaction::Tra
     (address, coinbase_tx, coinbase_vout)
 }
 
+fn handover_input_size(sigs: usize, placeholders: usize) -> usize {
+    // TODO: check me
+    SIG_SIZE*sigs + placeholders + REST_SCRIPT_SIZE + FIXED_INPUT_OVERHEAD
+}
+
+const PEG_IN_OUTPUT_SIZE: usize = 43; // As reported by `peg_in.output[0].size()`. TODO: double-check that this is always right
+const SIG_SIZE: usize = 64; // Schnorr sig size (https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki#verification)
+const FIXED_INPUT_OVERHEAD: usize = 42; // TODO: replace with sth that isn't the answer to everything
+const REST_SCRIPT_SIZE: usize = 42; // TODO: replace with sth that isn't the answer to everything
+
+fn handover(
+    old_outputs: &Vec<(transaction::OutPoint, Amount)>,
+    max_output_no: usize,
+    max_tx_size: usize,
+    present_committee_keys: &Vec<Xpriv>,
+    missing_committee_keys: usize,
+    script_pubkey: &script::ScriptBuf, // As built in `create_peg_in_tx()`
+) -> Vec<transaction::Transaction> {
+    let secp = Secp256k1::new(); // TODO: have a const/single (initialized in main and passed around)/global secp?
+    let fan_in = cmp::max(1, old_outputs.len() / max_output_no);
+
+    // Assume that all inputs & outputs have the same size
+    // This assumption might be wrong for inputs if the number of validator sigs varies
+    let input_size = handover_input_size(present_committee_keys.len(), missing_committee_keys);
+    let max_outputs_per_tx = max_tx_size / (fan_in * input_size + PEG_IN_OUTPUT_SIZE);
+
+    let mut handover_txs = vec![];
+    // TODO: maybe use `iter::iterator::array_chunks()` when stabilized to avoid `collect()`ing
+    // (https://doc.rust-lang.org/stable/std/iter/trait.Iterator.html#method.array_chunks)
+    let old_outputs_chunked_per_new_output: Vec<_> = old_outputs.chunks(fan_in).collect();
+    let old_outputs_chunked_per_tx = old_outputs_chunked_per_new_output.chunks(max_outputs_per_tx);
+    for old_outputs_chunks_for_tx in old_outputs_chunked_per_tx {
+        let mut new_tx_inputs = vec![];
+        let mut new_tx_outputs = vec![];
+        for old_outputs_chunk in old_outputs_chunks_for_tx {
+            let mut in_value = Amount::ZERO;
+            for (outpoint, amount) in *old_outputs_chunk {
+                in_value += *amount;
+                new_tx_inputs.push(transaction::TxIn {
+                    previous_output: *outpoint,
+                    script_sig: script::ScriptBuf::new(),
+                    sequence: transaction::Sequence::MAX,
+                    witness: Witness::default(),
+                });
+            }
+            new_tx_outputs.push(transaction::TxOut {
+                value: in_value,
+                script_pubkey: script_pubkey.clone(),
+            });
+        }
+
+        let /*mut*/ tx = transaction::Transaction {
+            version: transaction::Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: new_tx_inputs,
+            output: new_tx_outputs,
+        };
+
+        // TODO: sign `tx` using `present_committee_keys`
+
+        handover_txs.push(tx);
+    }
+
+    handover_txs
+}
+
+fn peg_out() -> transaction::Transaction {
+    todo!();
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
