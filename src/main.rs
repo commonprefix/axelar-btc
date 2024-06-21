@@ -25,6 +25,7 @@ const COOKIE: &str = ".cookie";
 const COMMITTEE_SIZE: usize = 2;
 const NETWORK: Network = Network::Regtest;
 
+#[derive(Clone)]
 struct UTXO {
     txid: Txid,
     txout: TxOut,
@@ -40,6 +41,8 @@ struct Validator {
 struct MultisigProver {}
 
 impl User {
+    // Simulates a deposit transaction from the user. It uses the whole amount available from the given
+    // UTXO, minus 600 SATS for fee.
     fn peg_in(input: UTXO, script_pubkey: &ScriptBuf, rpc: &Client) -> transaction::Transaction {
         let tx_in = transaction::TxIn {
             previous_output: transaction::OutPoint {
@@ -56,6 +59,7 @@ impl User {
             script_pubkey: script_pubkey.clone(),
         };
 
+        // GMP data: destination chain, address and payload
         let op_return_out = transaction::TxOut {
             value: Amount::ZERO,
             script_pubkey: create_op_return(),
@@ -80,34 +84,52 @@ impl User {
 }
 
 impl MultisigProver {
+    // Upon request for unwrapping BTC, the MultisigProver creates a peg_out transaction
+    // releasing BTC from the multisig back to a recipient. This transaction will be passed
+    // around the validators for signing.
+    // The MultisigProver will use all the provided UTXOs for the peg_out transaction. Those
+    // UTXOs might have more BTC than required for the withdrawal, so there is also a 'change'
+    // output sending the extra BTC back to the multisig.
     fn create_peg_out_tx(
         inputs: Vec<UTXO>,
         fee: Amount,
+        withdrawal_amount: Amount,
         receiver_pubkey: &PublicKey,
         script: &ScriptBuf,
+        script_pubkey: &ScriptBuf,
     ) -> (transaction::Transaction, TapSighash) {
-        // Build peg-out tx that spends peg-in tx
-        // TODO: iterate over the inputs
-        let peg_out_tx_in = transaction::TxIn {
-            previous_output: transaction::OutPoint {
-                txid: inputs[0].txid,
-                vout: inputs[0].vout,
-            },
-            script_sig: script::ScriptBuf::new(),
-            sequence: transaction::Sequence::MAX,
-            witness: Witness::default(),
+        let tx_ins = inputs
+            .iter()
+            .map(|utxo| transaction::TxIn {
+                previous_output: transaction::OutPoint {
+                    txid: utxo.txid,
+                    vout: utxo.vout,
+                },
+                script_sig: script::ScriptBuf::new(),
+                sequence: transaction::Sequence::MAX,
+                witness: Witness::default(),
+            })
+            .collect::<Vec<transaction::TxIn>>();
+
+        // Create outputs for user and change
+        let total_input_amount = inputs.iter().map(|utxo| utxo.txout.value).sum::<Amount>();
+        let change_amount = total_input_amount - withdrawal_amount - fee;
+
+        let recipient_out = transaction::TxOut {
+            value: withdrawal_amount,
+            script_pubkey: ScriptBuf::new_p2pk(&(*receiver_pubkey).into()),
         };
 
-        let p2pk = ScriptBuf::new_p2pk(&(*receiver_pubkey).into());
+        let change_out = transaction::TxOut {
+            value: change_amount,
+            script_pubkey: script_pubkey.clone(),
+        };
 
         let unsigned_peg_out_tx = transaction::Transaction {
             version: transaction::Version::TWO,
             lock_time: LockTime::ZERO,
-            input: vec![peg_out_tx_in],
-            output: vec![transaction::TxOut {
-                value: inputs[0].txout.value - fee,
-                script_pubkey: p2pk,
-            }],
+            input: tx_ins,
+            output: vec![recipient_out, change_out],
         };
 
         // Create sighash of peg out transaction to pass it around the validators for signing
@@ -170,6 +192,8 @@ impl Validator {
         self.key.to_keypair(&secp).x_only_public_key().0
     }
 
+    // The validators blindly trust the signature hash that they need to sign,
+    // and provide their Schnorr signatures on it.
     fn sign_sighash(&self, sighash: &TapSighash, secp: &Secp256k1<All>) -> Signature {
         let msg = Message::from_digest_slice(&sighash.to_byte_array()).unwrap();
 
@@ -191,7 +215,7 @@ fn main() {
     // Initialize RPC
     let rpc = Client::new(
         "http://127.0.0.1:18443",
-        Auth::CookieFile(PathBuf::from(&(bitcoin_dir.to_owned() + COOKIE))), // TODO: don't hardcode this
+        Auth::CookieFile(PathBuf::from(&(bitcoin_dir.to_owned() + COOKIE))),
     )
     .unwrap();
     let (address, coinbase_tx, coinbase_vout) = init_wallet(&bitcoin_dir, &rpc, NETWORK, WALLET);
@@ -233,10 +257,12 @@ fn main() {
         txout: peg_in.output[0].clone(),
     };
     let (unsigned_peg_out, sighash) = MultisigProver::create_peg_out_tx(
-        vec![multisig_utxo],
+        vec![multisig_utxo.clone()],
         Amount::from_sat(5000),
+        multisig_utxo.txout.value / 2,
         &receiver_pubkey,
         &script,
+        &script_pubkey,
     );
 
     // Get signatures for the withdrawal from each member of the committee
