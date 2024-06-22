@@ -366,7 +366,7 @@ fn handover(
 
 // We don't keep track of which txs have been accepted and which haven't. TODO: add this
 fn peg_out(
-    old_outputs: &Vec<(transaction::OutPoint, Amount)>,
+    utxos: &mut Vec<(transaction::OutPoint, Amount)>, // utxos spent by peg_out tx will be removed
     payouts: Vec<(Amount, UntweakedPublicKey)>, // First elements are net payments to the client after extracting our fee
     miner_fee: Amount, // TODO: this should be per vbyte, as tx size varies
     dust_limit: Amount,
