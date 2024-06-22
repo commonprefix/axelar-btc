@@ -364,7 +364,7 @@ fn handover(
     handover_txs
 }
 
-// We don't keep track of which txs have been accepted and which haven't. TODO: add this
+// We don't keep track of which txs have been finalized on-chain and which haven't. TODO: maybe add this
 fn peg_out(
     utxos: &mut Vec<(transaction::OutPoint, Amount)>, // utxos spent by peg_out tx will be removed
     payouts: Vec<(Amount, UntweakedPublicKey)>, // First elements are net payments to the client after extracting our fee
