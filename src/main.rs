@@ -312,7 +312,8 @@ fn handover(
     max_tx_size: usize,
     present_committee_keys: &Vec<Xpriv>,
     missing_committee_keys: usize,
-    script_pubkey: &script::ScriptBuf, // As built in `create_peg_in_tx()`
+    old_script_pubkey: &script::ScriptBuf, // As built in `create_peg_in_tx()`
+    new_script_pubkey: &script::ScriptBuf,
 ) -> Vec<transaction::Transaction> {
     let secp = Secp256k1::new(); // TODO: have a const/single (initialized in main and passed around)/global secp?
     let fan_in = cmp::max(1, old_outputs.len() / max_output_no);
@@ -343,7 +344,7 @@ fn handover(
             }
             new_tx_outputs.push(transaction::TxOut {
                 value: in_value,
-                script_pubkey: script_pubkey.clone(),
+                script_pubkey: new_script_pubkey.clone(),
             });
         }
 
@@ -354,6 +355,7 @@ fn handover(
             output: new_tx_outputs,
         };
 
+        // TODO: Add `old_script_pubkey` to witnesses
         // TODO: sign `tx` using `present_committee_keys`
 
         handover_txs.push(tx);
