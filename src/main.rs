@@ -370,6 +370,8 @@ fn peg_out(
     payouts: Vec<(Amount, UntweakedPublicKey)>, // First elements are net payments to the client after extracting our fee
     miner_fee: Amount, // fee in sats per vbyte
     dust_limit: Amount,
+    committee_keys: &Vec<Xpriv>,
+    script_pubkey: &script::ScriptBuf, // Weighted multisig script
 ) -> transaction::Transaction {
     let secp = Secp256k1::new();
     let input_value = payouts.iter().fold(Amount::ZERO, |acc, (payout, _)| acc + *payout);
@@ -413,6 +415,9 @@ fn peg_out(
         });
         goal_value = input_value + miner_fee*peg_out_tx.vsize().try_into().unwrap()
     }
+
+    // TODO: Add `script_pubkey` to witnesses
+    // TODO: sign `peg_out_tx` using `committee_keys`
 
     peg_out_tx
 }
