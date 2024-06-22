@@ -373,6 +373,7 @@ fn peg_out(
 ) -> transaction::Transaction {
     let secp = Secp256k1::new();
     let input_value = payouts.iter().fold(Amount::ZERO, |acc, (payout, _)| acc + *payout);
+
     let new_outputs = payouts.iter().map(|(net_payout, pk)| {
         let taproot_spend_info = TaprootBuilder::new()
             .add_leaf(0, ScriptBuf::new())
@@ -387,8 +388,33 @@ fn peg_out(
                 taproot_spend_info.merkle_root()
             ),
         }
-    });
-    todo!(); // TODO: continue from `filtered_old_outputs`
+    }).collect();
+
+    let mut peg_out_tx = transaction::Transaction {
+        version: transaction::Version::TWO,
+        lock_time: LockTime::ZERO,
+        input: vec![],
+        output: new_outputs,
+    };
+    // greedily add utxos until the required input_value and fees are reached
+    // TODO: choose utxos more intelligently: reduce number of inputs/hit the exact input_value
+    let mut collected_input_value = Amount::ZERO;
+    let mut goal_value = input_value + miner_fee*peg_out_tx.vsize().try_into().unwrap();
+    while collected_input_value < goal_value {
+        let utxo = utxos.pop().expect( // TODO: return Result if failing to peg_out is possible
+            &format!("FATAL: all utxos are not enough to match input_value + fees = {goal_value}")
+        );
+        collected_input_value += utxo.1;
+        peg_out_tx.input.push(transaction::TxIn {
+            previous_output: utxo.0,
+            script_sig: script::ScriptBuf::new(),
+            sequence: transaction::Sequence::MAX,
+            witness: Witness::default(),
+        });
+        goal_value = input_value + miner_fee*peg_out_tx.vsize().try_into().unwrap()
+    }
+
+    peg_out_tx
 }
 
 fn main() {
