@@ -368,7 +368,7 @@ fn handover(
 fn peg_out(
     utxos: &mut Vec<(transaction::OutPoint, Amount)>, // utxos spent by peg_out tx will be removed
     payouts: Vec<(Amount, UntweakedPublicKey)>, // First elements are net payments to the client after extracting our fee
-    miner_fee: Amount, // TODO: this should be per vbyte, as tx size varies
+    miner_fee: Amount, // fee in sats per vbyte
     dust_limit: Amount,
 ) -> transaction::Transaction {
     let secp = Secp256k1::new();
