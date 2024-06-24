@@ -3,7 +3,7 @@ use bitcoin::Address;
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use num_bigint::BigUint;
 use num_traits::ops::bytes::ToBytes;
-use std::{cmp, collections::BTreeMap, env, path::PathBuf};
+use std::{cmp, collections::BTreeMap, env, path::PathBuf, ops::Div};
 
 use bitcoin::{
     amount::Amount,
@@ -18,35 +18,34 @@ use bitcoin::{
 const WALLET: &str = "wallets/default";
 const COOKIE: &str = ".cookie";
 
+// TODO: use real weights
+const WEIGHTS: [i64; COMMITTEE_SIZE] = [1, 2, 4, 5, 4, 7, 5, 5, 4, 2, 10, 5, 4, 3, 3, 2, 2, 4, 3, 2, 4, 5, 6, 6, 4, 3, 2, 2, 5, 4, 2, 7, 3, 4, 4, 4, 2, 7, 3, 2, 5, 4, 4, 4, 3, 5, 4, 5, 5, 4, 8, 4, 3, 5, 6, 4, 4, 6, 6, 5, 3, 5, 6, 6, 8, 7, 4, 5, 7, 6, 8, 9, 11, 12, 7];
+
 fn create_op_return() -> ScriptBuf {
     let data = b"ethereum:0x0000000000000000000000000000000000000000:foobar";
     ScriptBuf::new_op_return(data)
 }
 
-fn create_multisig_script(committee_keys: &Vec<Xpriv>) -> ScriptBuf {
+fn create_multisig_script(
+    committee_keys_weights: &Vec<(Xpriv, i64)>, // TODO: define bespoke type for weights
+    threshold: i64,
+) -> ScriptBuf {
     let secp = Secp256k1::new();
     let mut script = script::Builder::new().push_int(0); // TODO: the first signature could initialize the accumulator
-    for i in 0..committee_keys.len() {
+    for (key, weight) in committee_keys_weights.iter().rev() {
         script = script
             .push_opcode(OP_SWAP)
-            .push_x_only_key(
-                &committee_keys[committee_keys.len() - 1 - i]
-                    .to_keypair(&secp)
-                    .x_only_public_key()
-                    .0,
-            )
+            .push_x_only_key(&key.to_keypair(&secp).x_only_public_key().0)
             .push_opcode(OP_CHECKSIG)
             .push_opcode(OP_IF)
             // Each committee member has weight equal to its index + 1
-            .push_int(1)
+            .push_int(*weight)
             .push_opcode(OP_ELSE)
             .push_int(0)
             .push_opcode(OP_ENDIF) // ENDIF valid signature
             .push_opcode(OP_ADD);
     }
-    script = script.push_int(2).push_opcode(OP_GREATERTHANOREQUAL);
-
-    script.into_script()
+    script.push_int(threshold).push_opcode(OP_GREATERTHANOREQUAL).into_script()
 }
 
 fn create_unspendable_internal_key() -> XOnlyPublicKey {
@@ -78,8 +77,9 @@ const NETWORK: Network = Network::Regtest;
 fn create_peg_in_tx(
     coinbase_tx: &transaction::Transaction,
     coinbase_vout: &usize,
-    committee_keys: &Vec<Xpriv>,
+    committee_keys_weights: &Vec<(Xpriv, i64)>,
     rpc: &Client,
+    threshold: i64,
 ) -> transaction::Transaction {
     let secp = Secp256k1::new();
     let tx_in = transaction::TxIn {
@@ -92,7 +92,7 @@ fn create_peg_in_tx(
         witness: Witness::new(),
     };
 
-    let script = create_multisig_script(&committee_keys);
+    let script = create_multisig_script(&committee_keys_weights, threshold);
     let internal_key = create_unspendable_internal_key();
 
     let taproot_spend_info = TaprootBuilder::new()
@@ -136,11 +136,12 @@ fn create_peg_in_tx(
 
 fn create_peg_out_tx(
     signed_peg_in_tx: &transaction::Transaction,
-    committee_keys: &Vec<Xpriv>,
+    committee_keys_weights: &Vec<(Xpriv, i64)>,
     validator_index: usize,
+    threshold: i64,
 ) -> Psbt {
     let secp = Secp256k1::new();
-    let script = create_multisig_script(committee_keys);
+    let script = create_multisig_script(&committee_keys_weights, threshold);
 
     // Build peg-out tx that spends peg-in tx
     let peg_out_tx_in = transaction::TxIn {
@@ -193,14 +194,14 @@ fn create_peg_out_tx(
     psbt.inputs[0].tap_key_origins =
         BTreeMap::<bitcoin::XOnlyPublicKey, (Vec<TapLeafHash>, KeySource)>::new();
     psbt.inputs[0].tap_key_origins.insert(
-        committee_keys[validator_index]
+        committee_keys_weights[validator_index].0
             .to_keypair(&secp)
             .x_only_public_key()
             .0,
         (
             vec![script.tapscript_leaf_hash()],
             (
-                Xpub::from_priv(&secp, &committee_keys[validator_index]).fingerprint(),
+                Xpub::from_priv(&secp, &committee_keys_weights[validator_index].0).fingerprint(),
                 DerivationPath::default(),
             ),
         ),
@@ -214,15 +215,19 @@ fn create_peg_out_tx(
         (script.to_owned(), LeafVersion::TapScript),
     );
 
-    psbt.sign(&committee_keys[validator_index], &secp).unwrap();
+    psbt.sign(&committee_keys_weights[validator_index].0, &secp).unwrap();
 
     return psbt;
 }
 
-fn finalize_psbt(mut psbt: Psbt, committee_keys: &Vec<Xpriv>) -> transaction::Transaction {
+fn finalize_psbt(
+    mut psbt: Psbt,
+    committee_keys_weights: &Vec<(Xpriv, i64)>,
+    threshold: i64,
+) -> transaction::Transaction {
     let secp = Secp256k1::new();
 
-    let script = create_multisig_script(&committee_keys);
+    let script = create_multisig_script(&committee_keys_weights, threshold);
     let internal_key = create_unspendable_internal_key();
     let peg_in_taproot_spend_info = TaprootBuilder::new()
         .add_leaf(0, script.clone())
@@ -231,9 +236,9 @@ fn finalize_psbt(mut psbt: Psbt, committee_keys: &Vec<Xpriv>) -> transaction::Tr
         .unwrap();
 
     let mut script_witness = Witness::new();
-    for i in 0..committee_keys.len() {
+    for (key, _) in committee_keys_weights {
         let signature_option = psbt.inputs[0].tap_script_sigs.get(&(
-            committee_keys[i].to_keypair(&secp).x_only_public_key().0,
+            key.to_keypair(&secp).x_only_public_key().0,
             script.tapscript_leaf_hash(),
         ));
         if let Some(signature) = signature_option {
@@ -423,6 +428,7 @@ fn peg_out(
 }
 
 fn main() {
+    let threshold = WEIGHTS.iter().sum::<i64>() * Div::<i64>::div(2, 3);
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: cargo run <bitcoin_directory>");
@@ -437,20 +443,23 @@ fn main() {
     .unwrap();
     let (address, coinbase_tx, coinbase_vout) = init_wallet(&bitcoin_dir, &rpc);
 
-    let mut committee_keys = vec![];
+    let mut committee_keys_weights = vec![];
     for i in 0..COMMITTEE_SIZE {
-        committee_keys.push(Xpriv::new_master(NETWORK, &[i.try_into().unwrap()]).unwrap());
+        committee_keys_weights.push((
+            Xpriv::new_master(NETWORK, &[i.try_into().unwrap()]).unwrap(),
+            WEIGHTS[i],
+        ));
     }
 
-    let peg_in = create_peg_in_tx(&coinbase_tx, &coinbase_vout, &committee_keys, &rpc);
-    let mut psbt = create_peg_out_tx(&peg_in, &committee_keys, 0);
+    let peg_in = create_peg_in_tx(&coinbase_tx, &coinbase_vout, &committee_keys_weights, &rpc, threshold);
+    let mut psbt = create_peg_out_tx(&peg_in, &committee_keys_weights, 0, threshold);
     let signers_count = cmp::min(COMMITTEE_SIZE - 1, 50);
     for i in 1..signers_count {
-        let current_psbt = create_peg_out_tx(&peg_in, &committee_keys, i);
+        let current_psbt = create_peg_out_tx(&peg_in, &committee_keys_weights, i, threshold);
         psbt.combine(current_psbt).unwrap();
     }
 
-    let tx = finalize_psbt(psbt, &committee_keys);
+    let tx = finalize_psbt(psbt, &committee_keys_weights, threshold);
     let result = rpc.test_mempool_accept(&[peg_in.raw_hex(), tx.raw_hex()]);
     match result {
         Err(error) => {
