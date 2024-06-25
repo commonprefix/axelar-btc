@@ -74,7 +74,7 @@ impl User {
             version: transaction::Version::TWO,
             lock_time: LockTime::ZERO,
             input: vec![tx_in],
-            output: vec![tx_out.clone(), op_return_out],
+            output: vec![tx_out, op_return_out],
         };
 
         let signed_raw_transaction = rpc
