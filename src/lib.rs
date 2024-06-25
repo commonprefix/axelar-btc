@@ -16,25 +16,28 @@ pub fn create_op_return() -> ScriptBuf {
 }
 
 pub fn create_multisig_script(
-    validators_pks: &Vec<XOnlyPublicKey>,
+    validators_pks: &Vec<(XOnlyPublicKey, i64)>,
     internal_key: XOnlyPublicKey,
+    threshold: i64,
     secp: &Secp256k1<All>,
 ) -> (ScriptBuf, ScriptBuf) {
     let mut builder = script::Builder::new().push_int(0); // TODO: the first signature could initialize the accumulator
-    for i in 0..validators_pks.len() {
+    for (key, weight) in validators_pks.iter() {
         builder = builder
             .push_opcode(OP_SWAP)
-            .push_x_only_key(&validators_pks[i])
+            .push_x_only_key(&key)
             .push_opcode(OP_CHECKSIG)
             .push_opcode(OP_IF)
             // Each committee member has weight equal to its index + 1
-            .push_int(1)
+            .push_int(*weight)
             .push_opcode(OP_ELSE)
             .push_int(0)
             .push_opcode(OP_ENDIF) // ENDIF valid signature
             .push_opcode(OP_ADD);
     }
-    builder = builder.push_int(2).push_opcode(OP_GREATERTHANOREQUAL);
+    builder = builder
+        .push_int(threshold)
+        .push_opcode(OP_GREATERTHANOREQUAL);
     let script = builder.into_script();
 
     let taproot_spend_info = TaprootBuilder::new()
@@ -152,4 +155,12 @@ pub fn test_and_submit(
             );
         }
     }
+}
+
+const SIG_SIZE: usize = 64; // Schnorr sig size (https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki#verification)
+const REST_SCRIPT_SIZE: usize = 42; // TODO: replace with sth that isn't the answer to everything
+const FIXED_INPUT_OVERHEAD: usize = 42; // TODO: replace with sth that isn't the answer to everything
+pub fn handover_input_size(sigs: usize, placeholders: usize) -> usize {
+    // TODO: check me
+    SIG_SIZE * sigs + placeholders + REST_SCRIPT_SIZE + FIXED_INPUT_OVERHEAD
 }
