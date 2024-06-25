@@ -53,10 +53,7 @@ impl User {
     // UTXO, minus 600 SATS for fee.
     fn peg_in(input: Utxo, script_pubkey: &ScriptBuf, rpc: &Client) -> transaction::Transaction {
         let tx_in = transaction::TxIn {
-            previous_output: transaction::OutPoint {
-                txid: input.outpoint.txid,
-                vout: u32::try_from(input.outpoint.vout).unwrap(),
-            },
+            previous_output: input.outpoint,
             script_sig: script::ScriptBuf::new(),
             sequence: transaction::Sequence::MAX,
             witness: Witness::new(),
@@ -110,10 +107,7 @@ impl MultisigProver {
         let tx_ins = inputs
             .iter()
             .map(|utxo| transaction::TxIn {
-                previous_output: transaction::OutPoint {
-                    txid: utxo.outpoint.txid,
-                    vout: utxo.outpoint.vout,
-                },
+                previous_output: utxo.outpoint,
                 script_sig: script::ScriptBuf::new(),
                 sequence: transaction::Sequence::MAX,
                 witness: Witness::default(),
