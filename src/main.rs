@@ -339,17 +339,17 @@ fn main() {
         validators.push(Validator::new(i));
     }
 
-    // Store the public keys of the validators
+    // Store the public keys & weights of the validators
     let secp = Secp256k1::new();
-    let mut validators_pks = vec![];
+    let mut validators_pks_weights = vec![];
     for i in 0..validators.len() {
-        validators_pks.push((validators[i].public_key(&secp), WEIGHTS[i]));
+        validators_pks_weights.push((validators[i].public_key(&secp), WEIGHTS[i]));
     }
 
     // Create the multisig bitcoin script and an internal unspendable key
     let internal_key = create_unspendable_internal_key();
     let (script, script_pubkey) =
-        create_multisig_script(&validators_pks, internal_key.clone(), threshold, &secp);
+        create_multisig_script(&validators_pks_weights, internal_key.clone(), threshold, &secp);
 
     // User: creates a deposit transaction
     let user_utxo = Utxo {
