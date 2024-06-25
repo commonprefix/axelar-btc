@@ -99,7 +99,7 @@ impl MultisigProver {
         &self,
         inputs: Vec<Utxo>,
         fee: Amount,
-        withdrawal_amount: Amount,
+        withdrawal_amount: Amount, // net payout, not including fee for bridge
         receiver_pubkey: &PublicKey,
         script: &ScriptBuf,
         script_pubkey: &ScriptBuf,
@@ -316,6 +316,7 @@ impl Validator {
 }
 
 fn main() {
+    // TODO: turn `threshold` into `const` when `sum()` & `div()` become `const`
     let threshold = WEIGHTS.iter().sum::<i64>() * Div::<i64>::div(2, 3);
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
