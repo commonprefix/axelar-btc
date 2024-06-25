@@ -38,7 +38,7 @@ struct Utxo {
     txout: TxOut,
 }
 
-struct User {}
+struct User;
 
 struct Validator {
     key: Xpriv,
@@ -147,7 +147,7 @@ impl MultisigProver {
             )
             .unwrap();
 
-        return (unsigned_peg_out_tx, sighash);
+        (unsigned_peg_out_tx, sighash)
     }
 
     fn create_handover_tx(
