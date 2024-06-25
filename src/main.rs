@@ -260,7 +260,7 @@ impl MultisigProver {
     fn finalize_tx_witness(
         &self,
         mut tx: transaction::Transaction,
-        committee_signatures: &HashMap<usize, Signature>,
+        committee_signatures: &Vec<Option<Signature>>,
         script: &ScriptBuf,
         internal_key: &XOnlyPublicKey,
         secp: &Secp256k1<All>,
@@ -276,9 +276,8 @@ impl MultisigProver {
             .unwrap();
 
         // add signatures in the correct order, fill in missing signatures with an empty vector
-        for i in 0..COMMITTEE_SIZE {
-            let signature_option = committee_signatures.get(&(COMMITTEE_SIZE - i - 1));
-            if let Some(signature) = signature_option {
+        for signature in committee_signatures.iter().rev() {
+            if let Some(signature) = signature {
                 tx.input[0].witness.push(signature.to_vec());
             } else {
                 tx.input[0].witness.push(&[]);
@@ -386,9 +385,10 @@ fn main() {
     );
 
     // Get signatures for the withdrawal from each member of the committee
-    let mut committee_signatures: HashMap<usize, Signature> = HashMap::new();
-    for i in 0..COMMITTEE_SIZE {
-        committee_signatures.insert(i, validators[i].sign_sighash(&sighash, &secp));
+    let mut committee_signatures = vec![];
+    for validator in validators {
+        // Missing signatures should be represented with None. Order matters.
+        committee_signatures.push(Some(validator.sign_sighash(&sighash, &secp)));
     }
 
     // MultisigProver: Collect signatures, fill in missing signatures, add control block and finalize witness
