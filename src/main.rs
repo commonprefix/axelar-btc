@@ -401,7 +401,7 @@ fn main() {
     );
 
     let outputs: Vec<Utxo> = vec![];
-    let _ = multisig_prover.create_handover_tx(&outputs, 5, 100, COMMITTEE_SIZE, 0, &script_pubkey);
+    let _ = multisig_prover.create_handover_tx(&outputs, 5, 100000, COMMITTEE_SIZE, 0, &script_pubkey);
 
     // Test peg in and peg out transactions for mempool acceptance and submit them
     test_and_submit(&rpc, [peg_in, peg_out], address);
