@@ -1,15 +1,14 @@
 use axelar_btc::{
     create_multisig_script, create_op_return, create_unspendable_internal_key, handover_input_size,
-    init_wallet, test_and_submit,
+    init_wallet, test_and_submit, SIG_SIZE,
 };
 use bitcoin::key::Secp256k1;
 use bitcoin::secp256k1::{All, Message, PublicKey};
 use bitcoin::sighash::SighashCache;
 use bitcoin::sighash::{Prevouts, ScriptPath};
-use bitcoin::{OutPoint, TapSighash, TapSighashType, TxOut};
+use bitcoin::{OutPoint, TapSighash, TapSighashType, TxOut, Weight};
 use bitcoin_hashes::Hash;
 use bitcoincore_rpc::{Auth, Client, RpcApi};
-use std::collections::HashMap;
 use std::{cmp, env, ops::Div, path::PathBuf};
 
 use bitcoin::{
@@ -155,24 +154,32 @@ impl MultisigProver {
         old_outputs: &Vec<Utxo>,
         max_output_no: usize,
         max_tx_size: usize,
-        present_committee_count: usize,
-        missing_committee_keys: usize,
+        miner_fee: Amount,
+        dust_limit: Amount,
         new_script_pubkey: &script::ScriptBuf,
     ) -> Vec<transaction::Transaction> {
+        // TODO: Maybe we should ceil the old_outputs.len() / max_output_no division to make
+        // sure that we always get exactly max_output_no outputs. Consider the case of
+        // old_outsputs.len() = 3, max_output_no = 2
         let fan_in = cmp::max(1, old_outputs.len() / max_output_no);
 
         // Assume that all inputs & outputs have the same size
         // This assumption might be wrong for inputs if the number of validator sigs varies
-        let input_size = handover_input_size(present_committee_count, missing_committee_keys);
+        // TODO: For now, assume that all the validators will sign the handover. An optimization would be
+        // to calculate the maximum number of validators that could be required in order to
+        // achieve quorum, by summing the stakes of the smallest validators, and use that
+        // to calculate the input size.
+        let input_size = handover_input_size(COMMITTEE_SIZE);
         let max_outputs_per_tx = max_tx_size / (fan_in * input_size + PEG_IN_OUTPUT_SIZE);
 
         let mut handover_txs = vec![];
+        let mut fee_reducted = false;
         // TODO: maybe use `iter::iterator::array_chunks()` when stabilized to avoid `collect()`ing
         // (https://doc.rust-lang.org/stable/std/iter/trait.Iterator.html#method.array_chunks)
         let old_outputs_chunked_per_new_output: Vec<_> = old_outputs.chunks(fan_in).collect();
         let old_outputs_chunked_per_tx =
             old_outputs_chunked_per_new_output.chunks(max_outputs_per_tx);
-        for old_outputs_chunks_for_tx in old_outputs_chunked_per_tx {
+        for old_outputs_chunks_for_tx in old_outputs_chunked_per_tx.clone() {
             let mut new_tx_inputs = vec![];
             let mut new_tx_outputs = vec![];
             for old_outputs_chunk in old_outputs_chunks_for_tx {
@@ -183,9 +190,15 @@ impl MultisigProver {
                         previous_output: utxo.outpoint,
                         script_sig: script::ScriptBuf::new(),
                         sequence: transaction::Sequence::MAX,
-                        witness: Witness::default(),
+                        witness: Witness::default(), // TODO: need signatures here
                     });
                 }
+
+                if in_value > miner_fee + dust_limit && !fee_reducted {
+                    in_value = in_value - miner_fee;
+                    fee_reducted = true;
+                }
+
                 new_tx_outputs.push(transaction::TxOut {
                     value: in_value,
                     script_pubkey: new_script_pubkey.clone(),
@@ -202,21 +215,25 @@ impl MultisigProver {
             handover_txs.push(tx);
         }
 
+        if !fee_reducted {
+            // TODO: split the fee among the UTXOs
+            panic!("All available UTXOs are less than the fee.")
+        }
+
         handover_txs
     }
 
-    // We don't keep track of which txs have been finalized on-chain and which haven't. TODO: maybe add this
     fn consume_utxos(
         &mut self,
         payouts: Vec<(Amount, PublicKey)>, // First elements are net payments to the client after extracting our fee
         miner_fee: Amount,                 // fee in sats per vbyte
         dust_limit: Amount,
-    ) -> (Vec<transaction::TxIn>, Amount) {
+    ) -> (Vec<transaction::TxIn>, Vec<transaction::TxOut>, Amount) {
         let input_value = payouts
             .iter()
             .fold(Amount::ZERO, |acc, (payout, _)| acc + *payout);
 
-        let new_outputs = payouts
+        let outputs = payouts
             .iter()
             .map(|(net_payout, pk)| transaction::TxOut {
                 value: *net_payout,
@@ -224,17 +241,10 @@ impl MultisigProver {
             })
             .collect();
 
-        let mut peg_out_tx = transaction::Transaction {
-            version: transaction::Version::TWO,
-            lock_time: LockTime::ZERO,
-            input: vec![],
-            output: new_outputs,
-        };
-
         // greedily add utxos until the required input_value and fees are reached
         // TODO: choose utxos more intelligently: reduce number of inputs/hit the exact input_value
         let mut collected_input_value = Amount::ZERO;
-        let mut goal_value = input_value + miner_fee * peg_out_tx.vsize().try_into().unwrap();
+        let mut goal_value = input_value;
         let mut inputs = vec![];
         while collected_input_value < goal_value {
             let utxo = self.available_utxos.pop().expect(
@@ -244,17 +254,20 @@ impl MultisigProver {
                 ),
             );
             collected_input_value += utxo.txout.value;
-            inputs.push(transaction::TxIn {
+            let txin = transaction::TxIn {
                 previous_output: utxo.outpoint,
                 script_sig: script::ScriptBuf::new(),
                 sequence: transaction::Sequence::MAX,
                 witness: Witness::default(),
-            });
-            // TODO: update the goal based on the new size
-            // goal_value = input_value + miner_fee * peg_out_tx.vsize().try_into().unwrap()
+            };
+            goal_value += miner_fee
+                * (txin.segwit_weight() + Weight::from_wu_usize(SIG_SIZE)).to_vbytes_ceil();
+            inputs.push(txin);
         }
 
-        (inputs, collected_input_value - goal_value)
+        let change = collected_input_value - goal_value;
+
+        (inputs, outputs, change)
     }
 
     fn finalize_tx_witness(
@@ -347,8 +360,12 @@ fn main() {
 
     // Create the multisig bitcoin script and an internal unspendable key
     let internal_key = create_unspendable_internal_key();
-    let (script, script_pubkey) =
-        create_multisig_script(&validators_pks_weights, internal_key.clone(), threshold, &secp);
+    let (script, script_pubkey) = create_multisig_script(
+        &validators_pks_weights,
+        internal_key.clone(),
+        threshold,
+        &secp,
+    );
 
     // User: creates a deposit transaction
     let user_utxo = Utxo {
@@ -401,7 +418,16 @@ fn main() {
     );
 
     let outputs: Vec<Utxo> = vec![];
-    let _ = multisig_prover.create_handover_tx(&outputs, 5, 100000, COMMITTEE_SIZE, 0, &script_pubkey);
+    let handover = multisig_prover.create_handover_tx(
+        &outputs,
+        2,
+        100000,
+        Amount::from_sat(2),
+        Amount::from_sat(1),
+        &script_pubkey,
+    );
+
+    println!("{:#?}", handover);
 
     // Test peg in and peg out transactions for mempool acceptance and submit them
     test_and_submit(&rpc, [peg_in, peg_out], address);
