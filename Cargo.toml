@@ -10,3 +10,4 @@ bitcoin = "*"
 num-bigint = "*"
 num-traits = "*"
 bitcoincore-rpc = { git = "https://github.com/rust-bitcoin/rust-bitcoincore-rpc" }
+bitcoin_hashes = "0.14.0"

@@ -19,6 +19,7 @@ name = "axelar-btc"
 version = "0.1.0"
 dependencies = [
  "bitcoin",
+ "bitcoin_hashes",
  "bitcoincore-rpc",
  "num-bigint",
  "num-traits",
