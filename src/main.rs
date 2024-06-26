@@ -19,6 +19,7 @@ use bitcoin::{
     taproot::{LeafVersion, Signature, TaprootBuilder},
     Network, ScriptBuf, XOnlyPublicKey,
 };
+use reqwest;
 
 const WALLET: &str = "wallets/default";
 const COOKIE: &str = ".cookie";
@@ -315,8 +316,24 @@ impl Validator {
 }
 
 fn main() {
-    // TODO: turn `threshold` into `const` when `sum()` & `div()` become `const`
-    let threshold = WEIGHTS.iter().sum::<i64>() * Div::<i64>::div(2, 3);
+    let client = reqwest::blocking::Client::new();
+    let bitcoin_validators = client
+        .post("https://api.axelarscan.io/validator/getChainMaintainers")
+        .json(&HashMap::from([("chain", "avalanche")])) // TODO: change `avalanche` to `bitcoin`
+        .send()
+        .expect("Validators needed")
+        .text()
+        .expect("Validators needed");
+    let all_validators =
+        reqwest::blocking::get("https://api.axelarscan.io/validator/getValidators")
+            .expect("Validators needed")
+            .text()
+            .expect("Validators needed");
+    println!("{bitcoin_validators:?}");
+    todo!();
+    let weights = [1,2,3];
+
+    let threshold = weights.iter().sum::<i64>() * Div::<i64>::div(2, 3);
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: cargo run <bitcoin_directory>");
@@ -342,7 +359,7 @@ fn main() {
     let secp = Secp256k1::new();
     let mut validators_pks_weights = vec![];
     for i in 0..validators.len() {
-        validators_pks_weights.push((validators[i].public_key(&secp), WEIGHTS[i]));
+        validators_pks_weights.push((validators[i].public_key(&secp), weights[i]));
     }
 
     // Create the multisig bitcoin script and an internal unspendable key
