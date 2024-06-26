@@ -157,10 +157,10 @@ pub fn test_and_submit(
     }
 }
 
-const SIG_SIZE: usize = 64; // Schnorr sig size (https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki#verification)
+pub const SIG_SIZE: usize = 64; // Schnorr sig size (https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki#verification)
 const REST_SCRIPT_SIZE: usize = 42; // TODO: replace with sth that isn't the answer to everything
 const FIXED_INPUT_OVERHEAD: usize = 42; // TODO: replace with sth that isn't the answer to everything
-pub fn handover_input_size(sigs: usize, placeholders: usize) -> usize {
+pub fn handover_input_size(sigs: usize) -> usize {
     // TODO: check me
-    SIG_SIZE * sigs + placeholders + REST_SCRIPT_SIZE + FIXED_INPUT_OVERHEAD
+    SIG_SIZE * sigs + REST_SCRIPT_SIZE + FIXED_INPUT_OVERHEAD
 }
