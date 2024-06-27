@@ -396,16 +396,16 @@ fn main() {
     let (address, coinbase_tx, coinbase_vout) = init_wallet(&bitcoin_dir, &rpc, NETWORK, WALLET);
 
     // Create validators' private keys
-    for (i, validator) in validators.into_iter().enumerate() {
+    for (i, validator) in validators.iter_mut().enumerate() {
         validator.key = get_private_key(i);
     }
 
     // Store the public keys & weights of the validators
     let secp = Secp256k1::new();
-    let mut validators_pks_weights = vec![];
-    for i in 0..validators.len() {
-        validators_pks_weights.push((validators[i].public_key(&secp), weights[i]));
-    }
+
+    let validators_pks_weights = validators.iter().map(
+        |x| (x.public_key(&secp), x.weight)
+    ).collect::<Vec<_>>();
 
     // Create the multisig bitcoin script and an internal unspendable key
     let internal_key = create_unspendable_internal_key();
