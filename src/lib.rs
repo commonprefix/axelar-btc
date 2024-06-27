@@ -3,8 +3,9 @@ use bitcoin::{
     opcodes::all::{OP_ADD, OP_CHECKSIG, OP_ELSE, OP_ENDIF, OP_GREATERTHANOREQUAL, OP_IF, OP_SWAP},
     script,
     secp256k1::All,
+    sighash::{Prevouts, ScriptPath, SighashCache},
     taproot::TaprootBuilder,
-    transaction, Address, Network, ScriptBuf, XOnlyPublicKey,
+    transaction, Address, Network, ScriptBuf, TapSighash, TapSighashType, TxOut, XOnlyPublicKey,
 };
 use bitcoincore_rpc::{Client, RawTx, RpcApi};
 use num_bigint::BigUint;
@@ -117,17 +118,19 @@ pub fn init_wallet(
 
 pub fn test_and_submit(
     rpc: &Client,
-    txs: [transaction::Transaction; 2],
+    txs: Vec<transaction::Transaction>,
     miner_address: Address,
 ) -> () {
     let peg_in = txs[0].clone();
     let peg_out = txs[1].clone();
-    let result = rpc.test_mempool_accept(&[peg_in.raw_hex(), peg_out.raw_hex()]);
+    let result =
+        rpc.test_mempool_accept(&txs.iter().map(|tx| tx.raw_hex()).collect::<Vec<String>>());
 
     let mempool_failure = || {
         println!("Mempool acceptance test failed. Try manually testing for mempool acceptance using the bitcoin cli for more information, with the following transactions:");
-        println!("Peg in: {}", peg_in.raw_hex());
-        println!("Peg out: {}", peg_out.raw_hex());
+        for (i, tx) in txs.iter().enumerate() {
+            println!("Transaction #{}: {}", i + 1, tx.raw_hex());
+        }
     };
 
     match result {
@@ -141,14 +144,13 @@ pub fn test_and_submit(
                 return;
             }
 
-            println!(
-                "Peg In: {:#?}",
-                rpc.send_raw_transaction(peg_in.raw_hex()).unwrap()
-            );
-            println!(
-                "Peg Out: {:#?}",
-                rpc.send_raw_transaction(peg_out.raw_hex()).unwrap()
-            );
+            for (i, tx) in txs.iter().enumerate() {
+                println!(
+                    "Transaction #{}: {}",
+                    i + 1,
+                    rpc.send_raw_transaction(tx.raw_hex()).unwrap()
+                );
+            }
             println!(
                 "Mined new block: {:#?}",
                 rpc.generate_to_address(1, &miner_address).unwrap()
