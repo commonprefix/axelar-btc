@@ -159,6 +159,23 @@ pub fn test_and_submit(
     }
 }
 
+pub fn create_sighash(
+    mut tx: transaction::Transaction,
+    prevouts: Vec<TxOut>,
+    script: &ScriptBuf,
+) -> TapSighash {
+    // Create sighash of peg out transaction to pass it around the validators for signing
+    let mut sighash_cache = SighashCache::new(&mut tx);
+    sighash_cache
+        .taproot_script_spend_signature_hash(
+            0,
+            &Prevouts::All(&prevouts),
+            ScriptPath::with_defaults(&script),
+            TapSighashType::Default, // TODO: why can't we use TapSighashType::All here?
+        )
+        .unwrap()
+}
+
 pub const SIG_SIZE: usize = 64; // Schnorr sig size (https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki#verification)
 const REST_SCRIPT_SIZE: usize = 42; // TODO: replace with sth that isn't the answer to everything
 const FIXED_INPUT_OVERHEAD: usize = 42; // TODO: replace with sth that isn't the answer to everything
