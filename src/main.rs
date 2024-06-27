@@ -7,7 +7,8 @@ use bitcoin::secp256k1::{All, Message, PublicKey};
 use bitcoin::{OutPoint, TapSighash, TapSighashType, TxOut, Weight};
 use bitcoin_hashes::Hash;
 use bitcoincore_rpc::{Auth, Client, RpcApi};
-use std::{cmp, env, ops::Div, path::PathBuf};
+use std::collections::HashMap;
+use std::{cmp, env, path::PathBuf};
 
 use bitcoin::{
     amount::Amount,
@@ -16,16 +17,14 @@ use bitcoin::{
     taproot::{LeafVersion, Signature, TaprootBuilder},
     Network, ScriptBuf, XOnlyPublicKey,
 };
+use reqwest;
+use serde::Deserialize;
+use serde_json;
 
 const WALLET: &str = "wallets/default";
 const COOKIE: &str = ".cookie";
 const COMMITTEE_SIZE: usize = 75;
-// TODO: use real weights
-const WEIGHTS: [i64; COMMITTEE_SIZE] = [
-    1, 2, 4, 5, 4, 7, 5, 5, 4, 2, 10, 5, 4, 3, 3, 2, 2, 4, 3, 2, 4, 5, 6, 6, 4, 3, 2, 2, 5, 4, 2,
-    7, 3, 4, 4, 4, 2, 7, 3, 2, 5, 4, 4, 4, 3, 5, 4, 5, 5, 4, 8, 4, 3, 5, 6, 4, 4, 6, 6, 5, 3, 5, 6,
-    6, 8, 7, 4, 5, 7, 6, 8, 9, 11, 12, 7,
-];
+const MAX_BTC_INT: i64 = 0x7fffffff;
 const NETWORK: Network = Network::Regtest;
 const PEG_IN_OUTPUT_SIZE: usize = 43; // As reported by `peg_in.output[0].size()`. TODO: double-check that this is always right
 
@@ -37,9 +36,14 @@ struct Utxo {
 
 struct User;
 
-#[derive(Clone, Copy)]
+#[derive(Deserialize, Debug, Clone)]
 struct Validator {
-    key: Xpriv,
+    operator_address: String,
+    // TODO: make sure this is the weight we should use
+    #[serde(rename = "quadratic_voting_power")]
+    weight: i64,
+    #[serde(skip_deserializing)]
+    key: Option<Xpriv>,
 }
 
 struct MultisigProver {
@@ -302,15 +306,13 @@ impl MultisigProver {
     }
 }
 
-impl Validator {
-    fn new(seed: usize) -> Self {
-        Validator {
-            key: Xpriv::new_master(NETWORK, &[seed.try_into().unwrap()]).unwrap(),
-        }
-    }
+fn get_private_key(seed: usize) -> Option<Xpriv> {
+    Some(Xpriv::new_master(NETWORK, &[seed.try_into().unwrap()]).unwrap())
+}
 
+impl Validator {
     fn public_key(&self, secp: &Secp256k1<All>) -> XOnlyPublicKey {
-        self.key.to_keypair(&secp).x_only_public_key().0
+        self.key.unwrap().to_keypair(&secp).x_only_public_key().0
     }
 
     // The validators blindly trust the signature hash that they need to sign,
@@ -319,15 +321,82 @@ impl Validator {
         let msg = Message::from_digest_slice(&sighash.to_byte_array()).unwrap();
 
         Signature {
-            signature: secp.sign_schnorr(&msg, &self.key.to_keypair(&secp)),
+            signature: secp.sign_schnorr(&msg, &self.key.unwrap().to_keypair(&secp)),
             sighash_type: TapSighashType::Default,
         }
     }
 }
 
+fn get_validators_threshold() -> (Vec<Validator>, i64) {
+    let (mut bitcoin_validators, all_validators) = parse_validators();
+    bitcoin_validators.sort_unstable();
+    let mut relevant_validators = all_validators
+        .into_iter()
+        .filter(|x| {
+            bitcoin_validators
+                .binary_search(&x.operator_address)
+                .is_ok()
+        })
+        .collect::<Vec<_>>();
+
+    let mut threshold = relevant_validators.iter().map(|x| x.weight).sum::<i64>() / 3 * 2;
+    // keep truncating LSBs until threshold fits in 32 bits
+    // TODO: optimization:
+    // find the exact extra bits with math on threshold and round instead of truncating
+    while threshold > MAX_BTC_INT {
+        let mut new_threshold = 0;
+        for val in relevant_validators.iter_mut() {
+            val.weight >>= 1;
+            new_threshold += val.weight;
+        }
+        threshold = new_threshold;
+    }
+
+    (relevant_validators, threshold)
+}
+
+fn parse_validators() -> (Vec<String>, Vec<Validator>) {
+    let client = reqwest::blocking::Client::new();
+
+    let bitcoin_validators = client
+        .post("https://api.axelarscan.io/validator/getChainMaintainers")
+        .json(&HashMap::from([("chain", "avalanche")])) // TODO: change `avalanche` to `bitcoin`
+        .send()
+        .expect("Did not receive response on request for chain maintainers")
+        .text()
+        .expect("Could not extract chain maintainers");
+
+    #[derive(Deserialize)]
+    struct BitcoinValidatorsResponse {
+        maintainers: Vec<String>,
+        time_spent: u32,
+    }
+
+    let bitcoin_validators: BitcoinValidatorsResponse =
+        serde_json::from_str(&bitcoin_validators).expect("Could not parse chain maintainers");
+    let bitcoin_validators = bitcoin_validators.maintainers;
+
+    let all_validators = client
+        .get("https://api.axelarscan.io/validator/getValidators")
+        .send()
+        .expect("Did not receive response on request for validators")
+        .text()
+        .expect("Could not extract validators");
+
+    #[derive(Deserialize)]
+    struct AllValidatorsResponse {
+        data: Vec<Validator>,
+    }
+
+    let all_validators: AllValidatorsResponse =
+        serde_json::from_str(&all_validators).expect("Could not parse validators");
+
+    (bitcoin_validators, all_validators.data)
+}
+
 fn main() {
-    // TODO: turn `threshold` into `const` when `sum()` & `div()` become `const`
-    let threshold = WEIGHTS.iter().sum::<i64>() * Div::<i64>::div(2, 3);
+    let (mut validators, mut threshold) = get_validators_threshold();
+
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: cargo run <bitcoin_directory>");
@@ -343,18 +412,18 @@ fn main() {
     .unwrap();
     let (address, coinbase_tx, coinbase_vout) = init_wallet(&bitcoin_dir, &rpc, NETWORK, WALLET);
 
-    // Create validators
-    let mut validators = vec![];
-    for i in 0..COMMITTEE_SIZE {
-        validators.push(Validator::new(i));
+    // Create validators' private keys
+    for (i, validator) in validators.iter_mut().enumerate() {
+        validator.key = get_private_key(i);
     }
 
     // Store the public keys & weights of the validators
     let secp = Secp256k1::new();
-    let mut validators_pks_weights = vec![];
-    for i in 0..validators.len() {
-        validators_pks_weights.push((validators[i].public_key(&secp), WEIGHTS[i]));
-    }
+
+    let validators_pks_weights = validators
+        .iter()
+        .map(|x| (x.public_key(&secp), x.weight))
+        .collect::<Vec<_>>();
 
     // Create the multisig bitcoin script and an internal unspendable key
     let internal_key = create_unspendable_internal_key();
