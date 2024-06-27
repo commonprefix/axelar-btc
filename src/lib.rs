@@ -30,6 +30,17 @@ pub struct Utxo {
     pub txout: TxOut,
 }
 
+#[derive(Deserialize)]
+struct BitcoinMaintainersResponse {
+    maintainers: Vec<String>,
+    time_spent: u32,
+}
+
+#[derive(Deserialize)]
+struct AllValidatorsResponse {
+    data: Vec<Validator>,
+}
+
 pub fn create_op_return() -> ScriptBuf {
     let data = b"ethereum:0x0000000000000000000000000000000000000000:foobar";
     ScriptBuf::new_op_return(data)
@@ -202,10 +213,27 @@ pub fn get_private_key(seed: usize, network: Network) -> Option<Xpriv> {
     Some(Xpriv::new_master(network, &[seed.try_into().unwrap()]).unwrap())
 }
 
-pub fn load_validators() -> (Vec<String>, Vec<Validator>) {
+pub fn load_axelar_validators() -> Vec<Validator> {
     let client = reqwest::blocking::Client::new();
 
-    let bitcoin_validators = client
+    let all_validators_response_str = client
+        .get("https://api.axelarscan.io/validator/getValidators")
+        .send()
+        .expect("Did not receive response on request for validators")
+        .text()
+        .expect("Could not extract validators");
+
+    let all_validators_response: AllValidatorsResponse =
+        serde_json::from_str(&all_validators_response_str).expect("Could not parse validators");
+
+    all_validators_response.data
+}
+
+pub fn load_bitcoin_maintainers() -> Vec<Validator> {
+    let client = reqwest::blocking::Client::new();
+    let axelar_validators = load_axelar_validators();
+
+    let bitcoin_maintainers_response_str = client
         .post("https://api.axelarscan.io/validator/getChainMaintainers")
         .json(&HashMap::from([("chain", "avalanche")])) // TODO: change `avalanche` to `bitcoin`
         .send()
@@ -213,58 +241,46 @@ pub fn load_validators() -> (Vec<String>, Vec<Validator>) {
         .text()
         .expect("Could not extract chain maintainers");
 
-    #[derive(Deserialize)]
-    struct BitcoinValidatorsResponse {
-        maintainers: Vec<String>,
-        time_spent: u32,
-    }
+    let bitcoin_maintainers_response: BitcoinMaintainersResponse =
+        serde_json::from_str(&bitcoin_maintainers_response_str)
+            .expect("Could not parse chain maintainers");
+    let mut bitcoin_maintainers_addresses = bitcoin_maintainers_response.maintainers;
 
-    let bitcoin_validators: BitcoinValidatorsResponse =
-        serde_json::from_str(&bitcoin_validators).expect("Could not parse chain maintainers");
-    let bitcoin_validators = bitcoin_validators.maintainers;
+    bitcoin_maintainers_addresses.sort_unstable();
 
-    let all_validators = client
-        .get("https://api.axelarscan.io/validator/getValidators")
-        .send()
-        .expect("Did not receive response on request for validators")
-        .text()
-        .expect("Could not extract validators");
-
-    #[derive(Deserialize)]
-    struct AllValidatorsResponse {
-        data: Vec<Validator>,
-    }
-
-    let all_validators: AllValidatorsResponse =
-        serde_json::from_str(&all_validators).expect("Could not parse validators");
-
-    (bitcoin_validators, all_validators.data)
-}
-
-pub fn get_validators_threshold() -> (Vec<Validator>, i64) {
-    let (mut bitcoin_validators, all_validators) = load_validators();
-    bitcoin_validators.sort_unstable();
-    let mut relevant_validators = all_validators
+    let bitcoin_maintainers = axelar_validators
         .into_iter()
         .filter(|x| {
-            bitcoin_validators
+            bitcoin_maintainers_addresses
                 .binary_search(&x.operator_address)
                 .is_ok()
         })
         .collect::<Vec<_>>();
 
-    let mut threshold = relevant_validators.iter().map(|x| x.weight).sum::<i64>() / 3 * 2;
+    bitcoin_maintainers
+}
+
+fn set_threshold_and_weights(validators: &mut Vec<Validator>) -> i64 {
+    let mut threshold = validators.iter().map(|x| x.weight).sum::<i64>() / 3 * 2;
     // keep truncating LSBs until threshold fits in 32 bits
     // TODO: optimization:
     // find the exact extra bits with math on threshold and round instead of truncating
     while threshold > MAX_BTC_INT {
         let mut new_threshold = 0;
-        for val in relevant_validators.iter_mut() {
+        for val in validators.iter_mut() {
             val.weight >>= 1;
             new_threshold += val.weight;
         }
-        threshold = new_threshold;
+        threshold = new_threshold / 3 * 2;
     }
 
-    (relevant_validators, threshold)
+    threshold
+}
+
+pub fn get_multisig_setup() -> (Vec<Validator>, i64) {
+    let mut bitcoin_maintainers = load_bitcoin_maintainers();
+
+    let threshold = set_threshold_and_weights(&mut bitcoin_maintainers);
+
+    (bitcoin_maintainers, threshold)
 }

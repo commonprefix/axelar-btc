@@ -27,7 +27,7 @@ impl MultisigProver {
     // output sending the extra BTC back to the multisig.
     pub fn create_peg_out_tx(
         &mut self,
-        fee: Amount,
+        miner_fee_per_vbyte: Amount,
         withdrawal_amount: Amount, // net payout, not including fee for bridge
         receiver_pubkey: &PublicKey,
         script: &ScriptBuf,
@@ -35,7 +35,7 @@ impl MultisigProver {
     ) -> (transaction::Transaction, TapSighash) {
         let (inputs, prevouts, mut outputs, change_amount) = self.consume_utxos(
             vec![(withdrawal_amount, *receiver_pubkey)],
-            fee,
+            miner_fee_per_vbyte,
             Amount::from_sat(10),
         );
 
@@ -147,7 +147,7 @@ impl MultisigProver {
     pub fn consume_utxos(
         &mut self,
         payouts: Vec<(Amount, PublicKey)>, // First elements are net payments to the client after extracting our fee
-        miner_fee: Amount,                 // fee in sats per vbyte
+        miner_fee_per_vbyte: Amount,       // fee in sats per vbyte
         dust_limit: Amount,
     ) -> (
         Vec<transaction::TxIn>,
@@ -187,7 +187,7 @@ impl MultisigProver {
                 sequence: transaction::Sequence::MAX,
                 witness: Witness::default(),
             };
-            goal_value += miner_fee
+            goal_value += miner_fee_per_vbyte
                 * (txin.segwit_weight() + Weight::from_wu_usize(SIG_SIZE)).to_vbytes_ceil();
             inputs.push(txin);
             prevouts.push(utxo.txout);

@@ -1,7 +1,7 @@
 use axelar_btc::{
     create_multisig_script, create_op_return, create_sighash, create_unspendable_internal_key,
-    get_private_key, get_validators_threshold, handover_input_size, init_wallet, test_and_submit,
-    Utxo, SIG_SIZE,
+    get_multisig_setup, get_private_key, handover_input_size, init_wallet, test_and_submit, Utxo,
+    SIG_SIZE,
 };
 use bitcoin::OutPoint;
 use bitcoin::{key::Secp256k1, Network};
@@ -19,7 +19,7 @@ const COOKIE: &str = ".cookie";
 const NETWORK: Network = Network::Regtest;
 
 fn main() {
-    let (mut validators, mut threshold) = get_validators_threshold();
+    let (mut validators, threshold) = get_multisig_setup();
 
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
