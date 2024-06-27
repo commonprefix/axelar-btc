@@ -26,12 +26,6 @@ use serde_json;
 const WALLET: &str = "wallets/default";
 const COOKIE: &str = ".cookie";
 const COMMITTEE_SIZE: usize = 75;
-// TODO: use real weights
-const WEIGHTS: [i64; COMMITTEE_SIZE] = [
-    1, 2, 4, 5, 4, 7, 5, 5, 4, 2, 10, 5, 4, 3, 3, 2, 2, 4, 3, 2, 4, 5, 6, 6, 4, 3, 2, 2, 5, 4, 2,
-    7, 3, 4, 4, 4, 2, 7, 3, 2, 5, 4, 4, 4, 3, 5, 4, 5, 5, 4, 8, 4, 3, 5, 6, 4, 4, 6, 6, 5, 3, 5, 6,
-    6, 8, 7, 4, 5, 7, 6, 8, 9, 11, 12, 7,
-];
 const MAX_BTC_INT: i64 = 0x7fffffff;
 const NETWORK: Network = Network::Regtest;
 const PEG_IN_OUTPUT_SIZE: usize = 43; // As reported by `peg_in.output[0].size()`. TODO: double-check that this is always right
@@ -384,7 +378,6 @@ fn parse_validators() -> (Vec<String>, Vec<Validator>) {
 }
 
 fn main() {
-    let weights = [1,2,3];
     let (mut validators, threshold) = get_validators_threshold();
 
     let args: Vec<String> = env::args().collect();
