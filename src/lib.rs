@@ -142,8 +142,6 @@ pub fn test_and_submit(
     txs: Vec<transaction::Transaction>,
     miner_address: Address,
 ) -> () {
-    let peg_in = txs[0].clone();
-    let peg_out = txs[1].clone();
     let result =
         rpc.test_mempool_accept(&txs.iter().map(|tx| tx.raw_hex()).collect::<Vec<String>>());
 
