@@ -47,7 +47,9 @@ struct User;
 // TODO: make sure that important fields (e.g., tombstoned, status) are not ignored
 struct Validator {
     operator_address: String,
-    quadratic_voting_power: u32,
+    // TODO: make sure this is the weight we should use
+    #[serde(rename = "quadratic_voting_power")]
+    weight: i64,
     #[serde(skip_deserializing)]
     key: Option<Xpriv>,
 }
