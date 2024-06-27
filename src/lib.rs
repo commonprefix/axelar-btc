@@ -1,5 +1,3 @@
-mod multisig_prover;
-mod user;
 mod validator;
 
 use std::collections::HashMap;
