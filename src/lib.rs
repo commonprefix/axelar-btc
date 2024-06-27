@@ -1,15 +1,36 @@
+mod multisig_prover;
+mod user;
+mod validator;
+
+use std::collections::HashMap;
+
 use bitcoin::{
+    bip32::Xpriv,
     key::{rand, Secp256k1, UntweakedPublicKey},
     opcodes::all::{OP_ADD, OP_CHECKSIG, OP_ELSE, OP_ENDIF, OP_GREATERTHANOREQUAL, OP_IF, OP_SWAP},
     script,
     secp256k1::All,
     sighash::{Prevouts, ScriptPath, SighashCache},
     taproot::TaprootBuilder,
-    transaction, Address, Network, ScriptBuf, TapSighash, TapSighashType, TxOut, XOnlyPublicKey,
+    transaction, Address, Network, OutPoint, ScriptBuf, TapSighash, TapSighashType, TxOut,
+    XOnlyPublicKey,
 };
 use bitcoincore_rpc::{Client, RawTx, RpcApi};
 use num_bigint::BigUint;
 use num_traits::ops::bytes::ToBytes;
+use serde::Deserialize;
+use validator::Validator;
+
+pub const SIG_SIZE: usize = 64; // Schnorr sig size (https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki#verification)
+const REST_SCRIPT_SIZE: usize = 42; // TODO: replace with sth that isn't the answer to everything
+const FIXED_INPUT_OVERHEAD: usize = 42; // TODO: replace with sth that isn't the answer to everything
+const MAX_BTC_INT: i64 = 0x7fffffff;
+
+#[derive(Clone)]
+pub struct Utxo {
+    pub outpoint: OutPoint,
+    pub txout: TxOut,
+}
 
 pub fn create_op_return() -> ScriptBuf {
     let data = b"ethereum:0x0000000000000000000000000000000000000000:foobar";
@@ -176,10 +197,78 @@ pub fn create_sighash(
         .unwrap()
 }
 
-pub const SIG_SIZE: usize = 64; // Schnorr sig size (https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki#verification)
-const REST_SCRIPT_SIZE: usize = 42; // TODO: replace with sth that isn't the answer to everything
-const FIXED_INPUT_OVERHEAD: usize = 42; // TODO: replace with sth that isn't the answer to everything
 pub fn handover_input_size(sigs: usize) -> usize {
     // TODO: check me
     SIG_SIZE * sigs + REST_SCRIPT_SIZE + FIXED_INPUT_OVERHEAD
+}
+
+pub fn get_private_key(seed: usize, network: Network) -> Option<Xpriv> {
+    Some(Xpriv::new_master(network, &[seed.try_into().unwrap()]).unwrap())
+}
+
+pub fn load_validators() -> (Vec<String>, Vec<Validator>) {
+    let client = reqwest::blocking::Client::new();
+
+    let bitcoin_validators = client
+        .post("https://api.axelarscan.io/validator/getChainMaintainers")
+        .json(&HashMap::from([("chain", "avalanche")])) // TODO: change `avalanche` to `bitcoin`
+        .send()
+        .expect("Did not receive response on request for chain maintainers")
+        .text()
+        .expect("Could not extract chain maintainers");
+
+    #[derive(Deserialize)]
+    struct BitcoinValidatorsResponse {
+        maintainers: Vec<String>,
+        time_spent: u32,
+    }
+
+    let bitcoin_validators: BitcoinValidatorsResponse =
+        serde_json::from_str(&bitcoin_validators).expect("Could not parse chain maintainers");
+    let bitcoin_validators = bitcoin_validators.maintainers;
+
+    let all_validators = client
+        .get("https://api.axelarscan.io/validator/getValidators")
+        .send()
+        .expect("Did not receive response on request for validators")
+        .text()
+        .expect("Could not extract validators");
+
+    #[derive(Deserialize)]
+    struct AllValidatorsResponse {
+        data: Vec<Validator>,
+    }
+
+    let all_validators: AllValidatorsResponse =
+        serde_json::from_str(&all_validators).expect("Could not parse validators");
+
+    (bitcoin_validators, all_validators.data)
+}
+
+pub fn get_validators_threshold() -> (Vec<Validator>, i64) {
+    let (mut bitcoin_validators, all_validators) = load_validators();
+    bitcoin_validators.sort_unstable();
+    let mut relevant_validators = all_validators
+        .into_iter()
+        .filter(|x| {
+            bitcoin_validators
+                .binary_search(&x.operator_address)
+                .is_ok()
+        })
+        .collect::<Vec<_>>();
+
+    let mut threshold = relevant_validators.iter().map(|x| x.weight).sum::<i64>() / 3 * 2;
+    // keep truncating LSBs until threshold fits in 32 bits
+    // TODO: optimization:
+    // find the exact extra bits with math on threshold and round instead of truncating
+    while threshold > MAX_BTC_INT {
+        let mut new_threshold = 0;
+        for val in relevant_validators.iter_mut() {
+            val.weight >>= 1;
+            new_threshold += val.weight;
+        }
+        threshold = new_threshold;
+    }
+
+    (relevant_validators, threshold)
 }
