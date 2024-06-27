@@ -323,13 +323,12 @@ impl Validator {
     }
 }
 
-fn get_validators() -> Vec<Validator> {
+fn get_validators_threshold() -> (Vec<Validator>, i64) {
     let (mut bitcoin_validators, mut all_validators) = parse_validators();
     bitcoin_validators.sort_unstable();
-    all_validators.retain(
+    let mut relevant_validators = all_validators.into_iter().filter(
         |x| bitcoin_validators.binary_search(&x.operator_address).is_ok()
-    );
-    all_validators
+    ).collect::<Vec<_>>();
 
     let mut threshold = relevant_validators.iter().map(|x| x.weight).sum::<i64>()/3*2;
     // keep truncating LSBs until threshold fits in 32 bits
@@ -343,6 +342,8 @@ fn get_validators() -> Vec<Validator> {
         }
         threshold = new_threshold;
     }
+
+    (relevant_validators, threshold)
 }
 
 fn parse_validators() -> (Vec<String>, Vec<Validator>) {
@@ -383,10 +384,9 @@ fn parse_validators() -> (Vec<String>, Vec<Validator>) {
 }
 
 fn main() {
-    let validators = get_validators();
     let weights = [1,2,3];
+    let (mut validators, threshold) = get_validators_threshold();
 
-    let threshold = weights.iter().sum::<i64>() * Div::<i64>::div(2, 3);
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: cargo run <bitcoin_directory>");
