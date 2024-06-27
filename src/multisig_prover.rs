@@ -14,6 +14,8 @@ use crate::{create_sighash, handover_input_size, Utxo, SIG_SIZE};
 const PEG_IN_OUTPUT_SIZE: usize = 43; // As reported by `peg_in.output[0].size()`. TODO: double-check that this is always right
 const COMMITTEE_SIZE: usize = 75; // TODO: replace
 
+type Payouts = Vec<(Amount, PublicKey)>;
+
 pub struct MultisigProver {
     pub available_utxos: Vec<Utxo>,
 }
@@ -28,16 +30,15 @@ impl MultisigProver {
     pub fn create_peg_out_tx(
         &mut self,
         miner_fee_per_vbyte: Amount,
-        withdrawal_amount: Amount, // net payout, not including fee for bridge
-        receiver_pubkey: &PublicKey,
+        payouts: Payouts,
         script: &ScriptBuf,
         script_pubkey: &ScriptBuf,
     ) -> (transaction::Transaction, TapSighash) {
-        let (inputs, prevouts, mut outputs, change_amount) = self.consume_utxos(
-            vec![(withdrawal_amount, *receiver_pubkey)],
-            miner_fee_per_vbyte,
-            Amount::from_sat(10),
-        );
+        // TODO: should take into account the maximum tx size as well and split the withdrawals to multiple
+        // transctions, like the handover does.
+
+        let (inputs, prevouts, mut outputs, change_amount) =
+            self.consume_utxos(payouts, miner_fee_per_vbyte, Amount::from_sat(10));
 
         let change_output = transaction::TxOut {
             value: change_amount,
@@ -146,8 +147,8 @@ impl MultisigProver {
 
     pub fn consume_utxos(
         &mut self,
-        payouts: Vec<(Amount, PublicKey)>, // First elements are net payments to the client after extracting our fee
-        miner_fee_per_vbyte: Amount,       // fee in sats per vbyte
+        payouts: Payouts, // First elements are net payments to the client after extracting our fee
+        miner_fee_per_vbyte: Amount, // fee in sats per vbyte
         dust_limit: Amount,
     ) -> (
         Vec<transaction::TxIn>,

@@ -132,8 +132,10 @@ fn main() {
     // MultisigProver: Creates an unsigned withdrawal transaction
     let (unsigned_peg_out, sighash) = multisig_prover.create_peg_out_tx(
         Amount::from_sat(5000),
-        multisig_prover.available_utxos[0].txout.value / 2,
-        &receiver_pubkey,
+        vec![(
+            multisig_prover.available_utxos[0].txout.value / 2,
+            receiver_pubkey.clone(),
+        )],
         &script,
         &script_pubkey,
     );
