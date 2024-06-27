@@ -1,11 +1,9 @@
 use axelar_btc::{
-    create_multisig_script, create_op_return, create_unspendable_internal_key, handover_input_size,
-    init_wallet, test_and_submit, SIG_SIZE,
+    create_multisig_script, create_op_return, create_sighash, create_unspendable_internal_key,
+    handover_input_size, init_wallet, test_and_submit, SIG_SIZE,
 };
 use bitcoin::key::Secp256k1;
 use bitcoin::secp256k1::{All, Message, PublicKey};
-use bitcoin::sighash::SighashCache;
-use bitcoin::sighash::{Prevouts, ScriptPath};
 use bitcoin::{OutPoint, TapSighash, TapSighashType, TxOut, Weight};
 use bitcoin_hashes::Hash;
 use bitcoincore_rpc::{Auth, Client, RpcApi};
@@ -39,6 +37,7 @@ struct Utxo {
 
 struct User;
 
+#[derive(Clone, Copy)]
 struct Validator {
     key: Xpriv,
 }
@@ -95,73 +94,51 @@ impl MultisigProver {
     // UTXOs might have more BTC than required for the withdrawal, so there is also a 'change'
     // output sending the extra BTC back to the multisig.
     fn create_peg_out_tx(
-        &self,
-        inputs: Vec<Utxo>,
+        &mut self,
         fee: Amount,
         withdrawal_amount: Amount, // net payout, not including fee for bridge
         receiver_pubkey: &PublicKey,
         script: &ScriptBuf,
         script_pubkey: &ScriptBuf,
     ) -> (transaction::Transaction, TapSighash) {
-        let tx_ins = inputs
-            .iter()
-            .map(|utxo| transaction::TxIn {
-                previous_output: utxo.outpoint,
-                script_sig: script::ScriptBuf::new(),
-                sequence: transaction::Sequence::MAX,
-                witness: Witness::default(),
-            })
-            .collect::<Vec<transaction::TxIn>>();
+        let (inputs, prevouts, mut outputs, change_amount) = self.consume_utxos(
+            vec![(withdrawal_amount, *receiver_pubkey)],
+            fee,
+            Amount::from_sat(10),
+        );
 
-        // Create outputs for user and change
-        let total_input_amount = inputs.iter().map(|utxo| utxo.txout.value).sum::<Amount>();
-        let change_amount = total_input_amount - withdrawal_amount - fee;
-
-        let recipient_out = transaction::TxOut {
-            value: withdrawal_amount,
-            script_pubkey: ScriptBuf::new_p2pk(&(*receiver_pubkey).into()),
-        };
-
-        let change_out = transaction::TxOut {
+        let change_output = transaction::TxOut {
             value: change_amount,
             script_pubkey: script_pubkey.clone(),
         };
+        outputs.push(change_output);
 
         let unsigned_peg_out_tx = transaction::Transaction {
             version: transaction::Version::TWO,
             lock_time: LockTime::ZERO,
-            input: tx_ins,
-            output: vec![recipient_out, change_out],
+            input: inputs,
+            output: outputs,
         };
 
         // Create sighash of peg out transaction to pass it around the validators for signing
-        let mut cloned_tx = unsigned_peg_out_tx.clone();
-        let mut sighash_cache = SighashCache::new(&mut cloned_tx);
-        let sighash = sighash_cache
-            .taproot_script_spend_signature_hash(
-                0,
-                &Prevouts::All(&[inputs[0].txout.clone()]),
-                ScriptPath::with_defaults(&script),
-                TapSighashType::Default,
-            )
-            .unwrap();
+        let sighash = create_sighash(unsigned_peg_out_tx.clone(), prevouts, script);
 
         (unsigned_peg_out_tx, sighash)
     }
 
     fn create_handover_tx(
         &self,
-        old_outputs: &Vec<Utxo>,
         max_output_no: usize,
         max_tx_size: usize,
         miner_fee: Amount,
         dust_limit: Amount,
-        new_script_pubkey: &script::ScriptBuf,
-    ) -> Vec<transaction::Transaction> {
+        old_script: &ScriptBuf,
+        new_script_pubkey: &ScriptBuf,
+    ) -> Vec<(transaction::Transaction, TapSighash)> {
         // TODO: Maybe we should ceil the old_outputs.len() / max_output_no division to make
         // sure that we always get exactly max_output_no outputs. Consider the case of
         // old_outsputs.len() = 3, max_output_no = 2
-        let fan_in = cmp::max(1, old_outputs.len() / max_output_no);
+        let fan_in = cmp::max(1, self.available_utxos.len() / max_output_no);
 
         // Assume that all inputs & outputs have the same size
         // This assumption might be wrong for inputs if the number of validator sigs varies
@@ -176,12 +153,14 @@ impl MultisigProver {
         let mut fee_reducted = false;
         // TODO: maybe use `iter::iterator::array_chunks()` when stabilized to avoid `collect()`ing
         // (https://doc.rust-lang.org/stable/std/iter/trait.Iterator.html#method.array_chunks)
-        let old_outputs_chunked_per_new_output: Vec<_> = old_outputs.chunks(fan_in).collect();
+        let old_outputs_chunked_per_new_output: Vec<_> =
+            self.available_utxos.chunks(fan_in).collect();
         let old_outputs_chunked_per_tx =
             old_outputs_chunked_per_new_output.chunks(max_outputs_per_tx);
         for old_outputs_chunks_for_tx in old_outputs_chunked_per_tx.clone() {
             let mut new_tx_inputs = vec![];
             let mut new_tx_outputs = vec![];
+            let mut prevouts = vec![];
             for old_outputs_chunk in old_outputs_chunks_for_tx {
                 let mut in_value = Amount::ZERO;
                 for utxo in *old_outputs_chunk {
@@ -192,8 +171,10 @@ impl MultisigProver {
                         sequence: transaction::Sequence::MAX,
                         witness: Witness::default(), // TODO: need signatures here
                     });
+                    prevouts.push(utxo.txout.clone().clone());
                 }
 
+                // TODO: split the fee among the UTXOs
                 if in_value > miner_fee + dust_limit && !fee_reducted {
                     in_value = in_value - miner_fee;
                     fee_reducted = true;
@@ -212,7 +193,7 @@ impl MultisigProver {
                 output: new_tx_outputs,
             };
 
-            handover_txs.push(tx);
+            handover_txs.push((tx, prevouts));
         }
 
         if !fee_reducted {
@@ -221,6 +202,14 @@ impl MultisigProver {
         }
 
         handover_txs
+            .iter()
+            .map(|(tx, prevouts)| {
+                (
+                    tx.clone(),
+                    create_sighash(tx.clone(), prevouts.clone(), old_script),
+                )
+            })
+            .collect()
     }
 
     fn consume_utxos(
@@ -228,7 +217,12 @@ impl MultisigProver {
         payouts: Vec<(Amount, PublicKey)>, // First elements are net payments to the client after extracting our fee
         miner_fee: Amount,                 // fee in sats per vbyte
         dust_limit: Amount,
-    ) -> (Vec<transaction::TxIn>, Vec<transaction::TxOut>, Amount) {
+    ) -> (
+        Vec<transaction::TxIn>,
+        Vec<transaction::TxOut>,
+        Vec<transaction::TxOut>,
+        Amount,
+    ) {
         let input_value = payouts
             .iter()
             .fold(Amount::ZERO, |acc, (payout, _)| acc + *payout);
@@ -246,6 +240,7 @@ impl MultisigProver {
         let mut collected_input_value = Amount::ZERO;
         let mut goal_value = input_value;
         let mut inputs = vec![];
+        let mut prevouts = vec![];
         while collected_input_value < goal_value {
             let utxo = self.available_utxos.pop().expect(
                 // TODO: return Result if failing to peg_out is possible
@@ -263,11 +258,12 @@ impl MultisigProver {
             goal_value += miner_fee
                 * (txin.segwit_weight() + Weight::from_wu_usize(SIG_SIZE)).to_vbytes_ceil();
             inputs.push(txin);
+            prevouts.push(utxo.txout);
         }
 
         let change = collected_input_value - goal_value;
 
-        (inputs, outputs, change)
+        (inputs, prevouts, outputs, change)
     }
 
     fn finalize_tx_witness(
@@ -288,17 +284,19 @@ impl MultisigProver {
             .control_block(&(script.clone(), LeafVersion::TapScript))
             .unwrap();
 
-        // add signatures in the correct order, fill in missing signatures with an empty vector
-        for signature in committee_signatures.iter().rev() {
-            if let Some(signature) = signature {
-                tx.input[0].witness.push(signature.to_vec());
-            } else {
-                tx.input[0].witness.push(&[]);
+        for input in &mut tx.input {
+            // add signatures in the correct order, fill in missing signatures with an empty vector
+            for signature in committee_signatures.iter().rev() {
+                if let Some(signature) = signature {
+                    input.witness.push(signature.to_vec());
+                } else {
+                    input.witness.push(&[]);
+                }
             }
-        }
 
-        tx.input[0].witness.push(script.to_bytes());
-        tx.input[0].witness.push(control_block.serialize());
+            input.witness.push(script.to_bytes());
+            input.witness.push(control_block.serialize());
+        }
 
         tx
     }
@@ -381,21 +379,67 @@ fn main() {
     let receiver_key = Xpriv::new_master(NETWORK, &[0]).unwrap();
     let receiver_pubkey = receiver_key.to_keypair(&secp).public_key();
 
+    // Initialize MultisigProver
+    let mut multisig_prover = MultisigProver {
+        available_utxos: vec![Utxo {
+            outpoint: OutPoint {
+                txid: peg_in.compute_txid(),
+                vout: 0,
+            },
+            txout: peg_in.output[0].clone(),
+        }],
+    };
+
+    // MultisigProver: Handover existing UTXOs to new multisig committee
+    let unsigned_handovers = multisig_prover.create_handover_tx(
+        2,
+        100000,
+        Amount::from_sat(1000),
+        Amount::from_sat(1),
+        &script,
+        &script_pubkey, // using the old committee again for simplicity
+    );
+
+    let mut handover_txs: Vec<bitcoin::Transaction> = unsigned_handovers
+        .iter()
+        .map(|(tx, sighash)| {
+            let mut committee_signatures = vec![];
+            for validator in validators.clone() {
+                committee_signatures.push(Some(validator.sign_sighash(&sighash, &secp)));
+            }
+
+            multisig_prover.finalize_tx_witness(
+                tx.clone(),
+                &committee_signatures,
+                &script,
+                &internal_key,
+                &secp,
+            )
+        })
+        .collect();
+
+    // MultisigProver: Update available_utxos
+    multisig_prover.available_utxos = handover_txs
+        .iter()
+        .flat_map(|tx| {
+            tx.output
+                .iter()
+                .enumerate()
+                .map(|(i, txout)| Utxo {
+                    outpoint: OutPoint {
+                        txid: tx.compute_txid(),
+                        vout: i as u32,
+                    },
+                    txout: txout.clone(),
+                })
+                .collect::<Vec<Utxo>>()
+        })
+        .collect();
+
     // MultisigProver: Creates an unsigned withdrawal transaction
-    let multisig_prover = MultisigProver {
-        available_utxos: vec![],
-    };
-    let multisig_utxo = Utxo {
-        outpoint: OutPoint {
-            txid: peg_in.compute_txid(),
-            vout: 0,
-        },
-        txout: peg_in.output[0].clone(),
-    };
     let (unsigned_peg_out, sighash) = multisig_prover.create_peg_out_tx(
-        vec![multisig_utxo.clone()],
         Amount::from_sat(5000),
-        multisig_utxo.txout.value / 2,
+        multisig_prover.available_utxos[0].txout.value / 2,
         &receiver_pubkey,
         &script,
         &script_pubkey,
@@ -403,7 +447,7 @@ fn main() {
 
     // Get signatures for the withdrawal from each member of the committee
     let mut committee_signatures = vec![];
-    for validator in validators {
+    for validator in validators.clone() {
         // Missing signatures should be represented with None. Order matters.
         committee_signatures.push(Some(validator.sign_sighash(&sighash, &secp)));
     }
@@ -417,18 +461,52 @@ fn main() {
         &secp,
     );
 
-    let outputs: Vec<Utxo> = vec![];
-    let handover = multisig_prover.create_handover_tx(
-        &outputs,
-        2,
-        100000,
-        Amount::from_sat(2),
-        Amount::from_sat(1),
-        &script_pubkey,
-    );
+    // let demo_outputs: Vec<Utxo> = vec![
+    //     Utxo {
+    //         outpoint: OutPoint {
+    //             txid: coinbase_tx.compute_txid(),
+    //             vout: 0,
+    //         },
+    //         txout: TxOut {
+    //             value: Amount::from_sat(0),
+    //             script_pubkey: ScriptBuf::default(),
+    //         },
+    //     },
+    //     Utxo {
+    //         outpoint: OutPoint {
+    //             txid: coinbase_tx.compute_txid(),
+    //             vout: 1,
+    //         },
+    //         txout: TxOut {
+    //             value: Amount::from_sat(1),
+    //             script_pubkey: ScriptBuf::default(),
+    //         },
+    //     },
+    //     Utxo {
+    //         outpoint: OutPoint {
+    //             txid: coinbase_tx.compute_txid(),
+    //             vout: 2,
+    //         },
+    //         txout: TxOut {
+    //             value: Amount::from_sat(2),
+    //             script_pubkey: ScriptBuf::default(),
+    //         },
+    //     },
+    //     Utxo {
+    //         outpoint: OutPoint {
+    //             txid: coinbase_tx.compute_txid(),
+    //             vout: 3,
+    //         },
+    //         txout: TxOut {
+    //             value: Amount::from_sat(3),
+    //             script_pubkey: ScriptBuf::default(),
+    //         },
+    //     },
+    // ];
 
-    println!("{:#?}", handover);
-
-    // Test peg in and peg out transactions for mempool acceptance and submit them
-    test_and_submit(&rpc, [peg_in, peg_out], address);
+    // Test transactions for mempool acceptance and submit them
+    let mut txs = vec![peg_in];
+    txs.append(&mut handover_txs);
+    txs.push(peg_out);
+    test_and_submit(&rpc, txs, address);
 }
