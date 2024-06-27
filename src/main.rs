@@ -32,6 +32,7 @@ const WEIGHTS: [i64; COMMITTEE_SIZE] = [
     7, 3, 4, 4, 4, 2, 7, 3, 2, 5, 4, 4, 4, 3, 5, 4, 5, 5, 4, 8, 4, 3, 5, 6, 4, 4, 6, 6, 5, 3, 5, 6,
     6, 8, 7, 4, 5, 7, 6, 8, 9, 11, 12, 7,
 ];
+const MAX_BTC_INT: i64 = 0x7fffffff;
 const NETWORK: Network = Network::Regtest;
 const PEG_IN_OUTPUT_SIZE: usize = 43; // As reported by `peg_in.output[0].size()`. TODO: double-check that this is always right
 
@@ -329,6 +330,19 @@ fn get_validators() -> Vec<Validator> {
         |x| bitcoin_validators.binary_search(&x.operator_address).is_ok()
     );
     all_validators
+
+    let mut threshold = relevant_validators.iter().map(|x| x.weight).sum::<i64>()/3*2;
+    // keep truncating LSBs until threshold fits in 32 bits
+    // TODO: optimization:
+    // find the exact extra bits with math on threshold and round instead of truncating
+    while threshold > MAX_BTC_INT {
+        let mut new_threshold = 0;
+        for val in relevant_validators.iter_mut() {
+            val.weight >>= 1;
+            new_threshold += val.weight;
+        }
+        threshold = new_threshold;
+    }
 }
 
 fn parse_validators() -> (Vec<String>, Vec<Validator>) {
