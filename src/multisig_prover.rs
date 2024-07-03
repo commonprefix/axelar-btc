@@ -199,40 +199,4 @@ impl MultisigProver {
 
         (inputs, prevouts, outputs, change)
     }
-
-    pub fn finalize_tx_witness(
-        &self,
-        mut tx: transaction::Transaction,
-        committee_signatures: &Vec<Vec<Option<Signature>>>,
-        script: &ScriptBuf,
-        internal_key: &XOnlyPublicKey,
-        secp: &Secp256k1<All>,
-    ) -> transaction::Transaction {
-        let peg_in_taproot_spend_info = TaprootBuilder::new()
-            .add_leaf(0, script.clone())
-            .unwrap()
-            .finalize(&secp, internal_key.clone())
-            .unwrap();
-
-        let control_block = peg_in_taproot_spend_info
-            .control_block(&(script.clone(), LeafVersion::TapScript))
-            .unwrap();
-
-        assert_eq!(tx.input.len(), committee_signatures.len());
-        for (input_index, input) in tx.input.iter_mut().enumerate() {
-            // add signatures in the correct order, fill in missing signatures with an empty vector
-            for signature in committee_signatures[input_index].iter().rev() {
-                if let Some(signature) = signature {
-                    input.witness.push(signature.to_vec());
-                } else {
-                    input.witness.push(&[]);
-                }
-            }
-
-            input.witness.push(script.to_bytes());
-            input.witness.push(control_block.serialize());
-        }
-
-        tx
-    }
 }

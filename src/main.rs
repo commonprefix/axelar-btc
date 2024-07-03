@@ -6,6 +6,7 @@ use bitcoin::{key::Secp256k1, Network};
 use bitcoin::{OutPoint, ScriptBuf, XOnlyPublicKey};
 use bitcoin_rs::key::UnspendableKey;
 use bitcoin_rs::script::MultisigScript;
+use bitcoin_rs::transaction::WitnessControl;
 use bitcoincore_rpc::{Auth, Client};
 use multisig_prover::MultisigProver;
 use std::{env, path::PathBuf};
@@ -94,7 +95,7 @@ fn main() {
     };
 
     // MultisigProver: Handover existing UTXOs to new multisig committee
-    let unsigned_handovers = multisig_prover.create_handover_tx(
+    let mut unsigned_handovers = multisig_prover.create_handover_tx(
         2,
         100000,
         Amount::from_sat(1000),
@@ -104,18 +105,13 @@ fn main() {
     );
 
     let mut handover_txs: Vec<bitcoin::Transaction> = unsigned_handovers
-        .iter()
+        .iter_mut()
         .map(|(tx, sighashes)| {
             // Get signatures for the withdrawal from each member of the committee
             let committee_signatures = collect_signatures(&sighashes, &validators, &secp);
 
-            multisig_prover.finalize_tx_witness(
-                tx.clone(),
-                &committee_signatures,
-                &script,
-                &internal_key,
-                &secp,
-            )
+            tx.finalize_witness(&committee_signatures, &script, &internal_key, &secp);
+            tx.clone()
         })
         .collect();
 
@@ -138,7 +134,7 @@ fn main() {
         .collect();
 
     // MultisigProver: Creates an unsigned withdrawal transaction
-    let (unsigned_peg_out, sighashes) = multisig_prover.create_peg_out_tx(
+    let (mut peg_out, sighashes) = multisig_prover.create_peg_out_tx(
         Amount::from_sat(5000),
         vec![(
             multisig_prover.available_utxos[0].txout.value / 2,
@@ -152,13 +148,7 @@ fn main() {
     let committee_signatures = collect_signatures(&sighashes, &validators, &secp);
 
     // MultisigProver: Collect signatures, fill in missing signatures, add control block and finalize witness
-    let peg_out = multisig_prover.finalize_tx_witness(
-        unsigned_peg_out,
-        &committee_signatures,
-        &script,
-        &internal_key,
-        &secp,
-    );
+    peg_out.finalize_witness(&committee_signatures, &script, &internal_key, &secp);
 
     // let demo_outputs: Vec<Utxo> = vec![
     //     Utxo {
