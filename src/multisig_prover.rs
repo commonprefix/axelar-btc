@@ -1,6 +1,5 @@
 use std::cmp;
 
-use axelar_btc::create_sighashes;
 use bitcoin::{
     absolute::LockTime,
     key::Secp256k1,
@@ -9,6 +8,7 @@ use bitcoin::{
     taproot::{LeafVersion, Signature, TaprootBuilder},
     transaction, Amount, ScriptBuf, TapSighash, Weight, Witness, XOnlyPublicKey,
 };
+use bitcoin_rs::transaction::TaprootSighash;
 
 use crate::{handover_input_size, Utxo, SIG_SIZE};
 
@@ -55,7 +55,7 @@ impl MultisigProver {
         };
 
         // Create sighash of peg out transaction to pass it around the validators for signing
-        let sighashes = create_sighashes(unsigned_peg_out_tx.clone(), prevouts.clone(), script);
+        let sighashes = unsigned_peg_out_tx.taproot_sighashes(prevouts.clone(), script);
 
         (unsigned_peg_out_tx, sighashes)
     }
@@ -140,7 +140,7 @@ impl MultisigProver {
             .map(|(tx, prevouts)| {
                 (
                     tx.clone(),
-                    create_sighashes(tx.clone(), prevouts.clone(), old_script),
+                    tx.taproot_sighashes(prevouts.clone(), old_script),
                 )
             })
             .collect()

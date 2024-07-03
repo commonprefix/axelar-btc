@@ -1,10 +1,11 @@
 use axelar_btc::{
-    collect_signatures, create_multisig_script, create_op_return, create_unspendable_internal_key,
-    get_multisig_setup, get_private_key, handover_input_size, init_wallet, test_and_submit, Utxo,
-    SIG_SIZE,
+    collect_signatures, create_op_return, get_multisig_setup, get_private_key, handover_input_size,
+    init_wallet, test_and_submit, Utxo, SIG_SIZE,
 };
-use bitcoin::OutPoint;
 use bitcoin::{key::Secp256k1, Network};
+use bitcoin::{OutPoint, ScriptBuf, XOnlyPublicKey};
+use bitcoin_rs::key::UnspendableKey;
+use bitcoin_rs::script::MultisigScript;
 use bitcoincore_rpc::{Auth, Client};
 use multisig_prover::MultisigProver;
 use std::{env, path::PathBuf};
@@ -50,10 +51,10 @@ fn main() {
         .collect::<Vec<_>>();
 
     // Create the multisig bitcoin script and an internal unspendable key
-    let internal_key = create_unspendable_internal_key();
-    let (script, script_pubkey) = create_multisig_script(
+    let internal_key = XOnlyPublicKey::create_unspendable_key();
+    let (script, script_pubkey) = ScriptBuf::create_threshold_multisig_with_weights(
         &validators_pks_weights,
-        internal_key.clone(),
+        &internal_key,
         threshold,
         &secp,
     );
