@@ -43,8 +43,6 @@ dependencies = [
  "bitcoin-rs",
  "bitcoin_hashes",
  "bitcoincore-rpc",
- "num-bigint",
- "num-traits",
  "reqwest",
  "serde",
  "serde_json",
