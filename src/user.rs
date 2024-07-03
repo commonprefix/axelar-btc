@@ -1,4 +1,4 @@
-use bitcoin::{absolute::LockTime, script, transaction, Amount, ScriptBuf, Witness};
+use bitcoin_rs::bitcoin::{absolute::LockTime, script, transaction, Amount, ScriptBuf, Witness};
 use bitcoincore_rpc::{Client, RpcApi};
 
 use crate::{create_op_return, Utxo};

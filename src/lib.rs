@@ -2,7 +2,7 @@ mod validator;
 
 use std::collections::HashMap;
 
-use bitcoin::{
+use bitcoin_rs::bitcoin::{
     bip32::Xpriv,
     key::{rand, Secp256k1},
     secp256k1::All,

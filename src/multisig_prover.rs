@@ -1,12 +1,8 @@
 use std::cmp;
 
-use bitcoin::{
-    absolute::LockTime,
-    key::Secp256k1,
-    script,
-    secp256k1::{All, PublicKey},
-    taproot::{LeafVersion, Signature, TaprootBuilder},
-    transaction, Amount, ScriptBuf, TapSighash, Weight, Witness, XOnlyPublicKey,
+use bitcoin_rs::bitcoin::{
+    absolute::LockTime, script, secp256k1::PublicKey, transaction, Amount, ScriptBuf, TapSighash,
+    Weight, Witness,
 };
 use bitcoin_rs::transaction::TaprootSighash;
 
@@ -165,7 +161,9 @@ impl MultisigProver {
             .iter()
             .map(|(net_payout, pk)| transaction::TxOut {
                 value: *net_payout,
-                script_pubkey: ScriptBuf::new_p2pk(&Into::<bitcoin::PublicKey>::into(*pk)), // TODO: use p2pkh
+                script_pubkey: ScriptBuf::new_p2pk(&Into::<bitcoin_rs::bitcoin::PublicKey>::into(
+                    *pk,
+                )), // TODO: use p2pkh
             })
             .collect();
 

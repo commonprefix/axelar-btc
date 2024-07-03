@@ -2,8 +2,10 @@ use axelar_btc::{
     collect_signatures, create_op_return, get_multisig_setup, get_private_key, handover_input_size,
     init_wallet, test_and_submit, Utxo, SIG_SIZE,
 };
-use bitcoin::{key::Secp256k1, Network};
-use bitcoin::{OutPoint, ScriptBuf, XOnlyPublicKey};
+use bitcoin_rs::bitcoin::{
+    amount::Amount, bip32::Xpriv, key::Secp256k1, Network, OutPoint, ScriptBuf, Transaction,
+    XOnlyPublicKey,
+};
 use bitcoin_rs::key::UnspendableKey;
 use bitcoin_rs::script::MultisigScript;
 use bitcoin_rs::transaction::WitnessControl;
@@ -12,7 +14,6 @@ use multisig_prover::MultisigProver;
 use std::{env, path::PathBuf};
 use user::User;
 
-use bitcoin::{amount::Amount, bip32::Xpriv};
 mod multisig_prover;
 mod user;
 
@@ -104,7 +105,7 @@ fn main() {
         &script_pubkey, // using the old committee again for simplicity
     );
 
-    let mut handover_txs: Vec<bitcoin::Transaction> = unsigned_handovers
+    let mut handover_txs: Vec<Transaction> = unsigned_handovers
         .iter_mut()
         .map(|(tx, sighashes)| {
             // Get signatures for the withdrawal from each member of the committee
