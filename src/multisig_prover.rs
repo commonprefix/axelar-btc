@@ -1,5 +1,6 @@
 use std::cmp;
 
+use axelar_btc::create_sighashes;
 use bitcoin::{
     absolute::LockTime,
     key::Secp256k1,
@@ -9,7 +10,7 @@ use bitcoin::{
     transaction, Amount, ScriptBuf, TapSighash, Weight, Witness, XOnlyPublicKey,
 };
 
-use crate::{create_sighash, handover_input_size, Utxo, SIG_SIZE};
+use crate::{handover_input_size, Utxo, SIG_SIZE};
 
 const PEG_IN_OUTPUT_SIZE: usize = 43; // As reported by `peg_in.output[0].size()`. TODO: double-check that this is always right
 const COMMITTEE_SIZE: usize = 75; // TODO: replace
@@ -33,7 +34,7 @@ impl MultisigProver {
         payouts: Payouts,
         script: &ScriptBuf,
         script_pubkey: &ScriptBuf,
-    ) -> (transaction::Transaction, TapSighash) {
+    ) -> (transaction::Transaction, Vec<TapSighash>) {
         // TODO: should take into account the maximum tx size as well and split the withdrawals to multiple
         // transctions, like the handover does.
 
@@ -49,14 +50,14 @@ impl MultisigProver {
         let unsigned_peg_out_tx = transaction::Transaction {
             version: transaction::Version::TWO,
             lock_time: LockTime::ZERO,
-            input: inputs,
+            input: inputs.clone(),
             output: outputs,
         };
 
         // Create sighash of peg out transaction to pass it around the validators for signing
-        let sighash = create_sighash(unsigned_peg_out_tx.clone(), prevouts, script);
+        let sighashes = create_sighashes(unsigned_peg_out_tx.clone(), prevouts.clone(), script);
 
-        (unsigned_peg_out_tx, sighash)
+        (unsigned_peg_out_tx, sighashes)
     }
 
     pub fn create_handover_tx(
@@ -67,7 +68,7 @@ impl MultisigProver {
         dust_limit: Amount,
         old_script: &ScriptBuf,
         new_script_pubkey: &ScriptBuf,
-    ) -> Vec<(transaction::Transaction, TapSighash)> {
+    ) -> Vec<(transaction::Transaction, Vec<TapSighash>)> {
         // TODO: Maybe we should ceil the old_outputs.len() / max_output_no division to make
         // sure that we always get exactly max_output_no outputs. Consider the case of
         // old_outsputs.len() = 3, max_output_no = 2
@@ -139,7 +140,7 @@ impl MultisigProver {
             .map(|(tx, prevouts)| {
                 (
                     tx.clone(),
-                    create_sighash(tx.clone(), prevouts.clone(), old_script),
+                    create_sighashes(tx.clone(), prevouts.clone(), old_script),
                 )
             })
             .collect()
@@ -164,7 +165,7 @@ impl MultisigProver {
             .iter()
             .map(|(net_payout, pk)| transaction::TxOut {
                 value: *net_payout,
-                script_pubkey: ScriptBuf::new_p2pk(&Into::<bitcoin::PublicKey>::into(*pk)),
+                script_pubkey: ScriptBuf::new_p2pk(&Into::<bitcoin::PublicKey>::into(*pk)), // TODO: use p2pkh
             })
             .collect();
 
@@ -202,7 +203,7 @@ impl MultisigProver {
     pub fn finalize_tx_witness(
         &self,
         mut tx: transaction::Transaction,
-        committee_signatures: &Vec<Option<Signature>>,
+        committee_signatures: &Vec<Vec<Option<Signature>>>,
         script: &ScriptBuf,
         internal_key: &XOnlyPublicKey,
         secp: &Secp256k1<All>,
@@ -217,9 +218,10 @@ impl MultisigProver {
             .control_block(&(script.clone(), LeafVersion::TapScript))
             .unwrap();
 
-        for input in &mut tx.input {
+        assert_eq!(tx.input.len(), committee_signatures.len());
+        for (input_index, input) in tx.input.iter_mut().enumerate() {
             // add signatures in the correct order, fill in missing signatures with an empty vector
-            for signature in committee_signatures.iter().rev() {
+            for signature in committee_signatures[input_index].iter().rev() {
                 if let Some(signature) = signature {
                     input.witness.push(signature.to_vec());
                 } else {

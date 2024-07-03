@@ -1,5 +1,5 @@
 use axelar_btc::{
-    create_multisig_script, create_op_return, create_sighash, create_unspendable_internal_key,
+    collect_signatures, create_multisig_script, create_op_return, create_unspendable_internal_key,
     get_multisig_setup, get_private_key, handover_input_size, init_wallet, test_and_submit, Utxo,
     SIG_SIZE,
 };
@@ -95,11 +95,9 @@ fn main() {
 
     let mut handover_txs: Vec<bitcoin::Transaction> = unsigned_handovers
         .iter()
-        .map(|(tx, sighash)| {
-            let mut committee_signatures = vec![];
-            for validator in validators.clone() {
-                committee_signatures.push(Some(validator.sign_sighash(&sighash, &secp)));
-            }
+        .map(|(tx, sighashes)| {
+            // Get signatures for the withdrawal from each member of the committee
+            let committee_signatures = collect_signatures(&sighashes, &validators, &secp);
 
             multisig_prover.finalize_tx_witness(
                 tx.clone(),
@@ -130,7 +128,7 @@ fn main() {
         .collect();
 
     // MultisigProver: Creates an unsigned withdrawal transaction
-    let (unsigned_peg_out, sighash) = multisig_prover.create_peg_out_tx(
+    let (unsigned_peg_out, sighashes) = multisig_prover.create_peg_out_tx(
         Amount::from_sat(5000),
         vec![(
             multisig_prover.available_utxos[0].txout.value / 2,
@@ -141,11 +139,7 @@ fn main() {
     );
 
     // Get signatures for the withdrawal from each member of the committee
-    let mut committee_signatures = vec![];
-    for validator in validators.clone() {
-        // Missing signatures should be represented with None. Order matters.
-        committee_signatures.push(Some(validator.sign_sighash(&sighash, &secp)));
-    }
+    let committee_signatures = collect_signatures(&sighashes, &validators, &secp);
 
     // MultisigProver: Collect signatures, fill in missing signatures, add control block and finalize witness
     let peg_out = multisig_prover.finalize_tx_witness(

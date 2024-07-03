@@ -9,7 +9,7 @@ use bitcoin::{
     script,
     secp256k1::All,
     sighash::{Prevouts, ScriptPath, SighashCache},
-    taproot::TaprootBuilder,
+    taproot::{Signature, TaprootBuilder},
     transaction, Address, Network, OutPoint, ScriptBuf, TapSighash, TapSighashType, TxOut,
     XOnlyPublicKey,
 };
@@ -187,21 +187,28 @@ pub fn test_and_submit(
     }
 }
 
-pub fn create_sighash(
+pub fn create_sighashes(
     mut tx: transaction::Transaction,
     prevouts: Vec<TxOut>,
     script: &ScriptBuf,
-) -> TapSighash {
+) -> Vec<TapSighash> {
     // Create sighash of peg out transaction to pass it around the validators for signing
+    let inputs_count = tx.input.len();
     let mut sighash_cache = SighashCache::new(&mut tx);
-    sighash_cache
-        .taproot_script_spend_signature_hash(
-            0,
-            &Prevouts::All(&prevouts),
-            ScriptPath::with_defaults(&script),
-            TapSighashType::Default, // TODO: why can't we use TapSighashType::All here?
+    let mut sighashes = vec![];
+    for input_index in 0..inputs_count {
+        sighashes.push(
+            sighash_cache
+                .taproot_script_spend_signature_hash(
+                    input_index,
+                    &Prevouts::All(&prevouts),
+                    ScriptPath::with_defaults(&script),
+                    TapSighashType::Default, // TODO: why can't we use TapSighashType::All here?
+                )
+                .unwrap(),
         )
-        .unwrap()
+    }
+    sighashes
 }
 
 pub fn handover_input_size(sigs: usize) -> usize {
@@ -283,4 +290,23 @@ pub fn get_multisig_setup() -> (Vec<Validator>, i64) {
     let threshold = set_threshold_and_weights(&mut bitcoin_maintainers);
 
     (bitcoin_maintainers, threshold)
+}
+
+pub fn collect_signatures(
+    sighashes: &Vec<TapSighash>,
+    validators: &Vec<Validator>,
+    secp: &Secp256k1<All>,
+) -> Vec<Vec<Option<Signature>>> {
+    // Get signatures for the withdrawal from each member of the committee
+    let mut committee_signatures = vec![];
+    for i in 0..sighashes.len() {
+        let mut committee_signatures_per_sighash = vec![];
+        for validator in validators.clone() {
+            // Missing signatures should be represented with None. Order matters.
+            committee_signatures_per_sighash
+                .push(Some(validator.sign_sighash(&sighashes[i], secp)));
+        }
+        committee_signatures.push(committee_signatures_per_sighash);
+    }
+    committee_signatures
 }
