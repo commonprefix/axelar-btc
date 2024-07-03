@@ -6,7 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bitcoin = "0.32.2"
 bitcoincore-rpc = { git = "https://github.com/rust-bitcoin/rust-bitcoincore-rpc" }
 bitcoin_hashes = "0.14.0"
 reqwest = { version = "*", features = ["blocking", "json"] }
