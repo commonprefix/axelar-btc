@@ -20,22 +20,30 @@ impl User {
             witness: Witness::new(),
         };
 
-        let tx_out = transaction::TxOut {
-            value: input.txout.value - Amount::from_sat(600),
-            script_pubkey: script_pubkey.clone(),
-        };
+        let fee = Amount::from_sat(600);
+        let amount_per_output =
+            input.txout.value.checked_div(2).unwrap() - fee.checked_div(2).unwrap();
+
+        let mut txouts = vec![];
+        for _ in 0..2 {
+            txouts.push(transaction::TxOut {
+                value: amount_per_output,
+                script_pubkey: script_pubkey.clone(),
+            })
+        }
 
         // GMP data: destination chain, address and payload
         let op_return_out = transaction::TxOut {
             value: Amount::ZERO,
             script_pubkey: create_op_return(),
         };
+        txouts.push(op_return_out);
 
         let unsigned_tx = transaction::Transaction {
             version: transaction::Version::TWO,
             lock_time: LockTime::ZERO,
             input: vec![tx_in],
-            output: vec![tx_out, op_return_out],
+            output: txouts,
         };
 
         let signed_raw_transaction = rpc

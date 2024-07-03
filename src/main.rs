@@ -74,13 +74,22 @@ fn main() {
 
     // Initialize MultisigProver
     let mut multisig_prover = MultisigProver {
-        available_utxos: vec![Utxo {
-            outpoint: OutPoint {
-                txid: peg_in.compute_txid(),
-                vout: 0,
+        available_utxos: vec![
+            Utxo {
+                outpoint: OutPoint {
+                    txid: peg_in.compute_txid(),
+                    vout: 0,
+                },
+                txout: peg_in.output[0].clone(),
             },
-            txout: peg_in.output[0].clone(),
-        }],
+            Utxo {
+                outpoint: OutPoint {
+                    txid: peg_in.compute_txid(),
+                    vout: 1,
+                },
+                txout: peg_in.output[0].clone(),
+            },
+        ],
     };
 
     // MultisigProver: Handover existing UTXOs to new multisig committee
