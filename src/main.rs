@@ -2,6 +2,7 @@ use axelar_btc::{
     collect_signatures, create_op_return, get_multisig_setup, get_private_key, handover_input_size,
     init_wallet, test_and_submit, Utxo, SIG_SIZE,
 };
+use bitcoin_rs::bitcoin::Address;
 use bitcoin_rs::bitcoin::{
     amount::Amount, bip32::Xpriv, key::Secp256k1, Network, OutPoint, ScriptBuf, Transaction,
     XOnlyPublicKey,
@@ -74,6 +75,7 @@ fn main() {
     // Create key for recipient of withdrawal
     let receiver_key = Xpriv::new_master(NETWORK, &[0]).unwrap();
     let receiver_pubkey = receiver_key.to_keypair(&secp).public_key();
+    let receiver_address = Address::p2pkh(bitcoin_rs::bitcoin::PublicKey::from(receiver_pubkey), NETWORK);
 
     // Initialize MultisigProver
     let mut multisig_prover = MultisigProver {
@@ -139,7 +141,7 @@ fn main() {
         Amount::from_sat(5000),
         vec![(
             multisig_prover.available_utxos[0].txout.value / 2,
-            receiver_pubkey.clone(),
+            receiver_address.clone(),
         )],
         &script,
         &script_pubkey,

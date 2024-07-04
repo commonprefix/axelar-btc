@@ -1,7 +1,7 @@
 use std::cmp;
 
 use bitcoin_rs::bitcoin::{
-    absolute::LockTime, script, secp256k1::PublicKey, transaction, Amount, ScriptBuf, TapSighash,
+    absolute::LockTime, script, Address, transaction, Amount, ScriptBuf, TapSighash,
     Weight, Witness,
 };
 use bitcoin_rs::transaction::TaprootSighash;
@@ -11,7 +11,7 @@ use crate::{handover_input_size, Utxo, SIG_SIZE};
 const PEG_IN_OUTPUT_SIZE: usize = 43; // As reported by `peg_in.output[0].size()`. TODO: double-check that this is always right
 const COMMITTEE_SIZE: usize = 75; // TODO: replace
 
-type Payouts = Vec<(Amount, PublicKey)>;
+type Payouts = Vec<(Amount, Address)>;
 
 pub struct MultisigProver {
     pub available_utxos: Vec<Utxo>,
@@ -159,11 +159,9 @@ impl MultisigProver {
 
         let outputs = payouts
             .iter()
-            .map(|(net_payout, pk)| transaction::TxOut {
+            .map(|(net_payout, receiver)| transaction::TxOut {
                 value: *net_payout,
-                script_pubkey: ScriptBuf::new_p2pk(&Into::<bitcoin_rs::bitcoin::PublicKey>::into(
-                    *pk,
-                )), // TODO: use p2pkh
+                script_pubkey: receiver.script_pubkey(),
             })
             .collect();
 
