@@ -126,7 +126,7 @@ checksum = "340e09e8399c7bd8912f495af6aa58bea0c9214773417ffaa8f6460f93aaee56"
 [[package]]
 name = "bitcoin-rs"
 version = "0.1.0"
-source = "git+ssh://git@github.com/commonprefix/bitcoin.rs.git#cc2ff3d1c5023fb27ab1d388c9e7253843e193ad"
+source = "git+ssh://git@github.com/commonprefix/bitcoin.rs.git#eaf70997ce8dff695cc3747237fbf889c4114c61"
 dependencies = [
  "bitcoin",
  "num-bigint",

@@ -1,5 +1,5 @@
 use bitcoin_hashes::Hash;
-use bitcoin_rs::bitcoin::{
+use bitcoin_rs::primitives::{
     bip32::Xpriv,
     key::Secp256k1,
     secp256k1::{All, Message},

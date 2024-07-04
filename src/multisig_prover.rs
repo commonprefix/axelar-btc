@@ -1,8 +1,8 @@
 use std::cmp;
 
-use bitcoin_rs::bitcoin::{
-    absolute::LockTime, script, Address, transaction, Amount, ScriptBuf, TapSighash,
-    Weight, Witness,
+use bitcoin_rs::primitives::{
+    absolute::LockTime, script, transaction, Address, Amount, ScriptBuf, TapSighash, Weight,
+    Witness,
 };
 use bitcoin_rs::transaction::TaprootSighash;
 
