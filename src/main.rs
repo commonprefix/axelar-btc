@@ -2,12 +2,11 @@ use axelar_btc::{
     collect_signatures, create_op_return, get_multisig_setup, get_private_key, handover_input_size,
     init_wallet, test_and_submit, Utxo, SIG_SIZE,
 };
-use bitcoin_rs::key::UnspendableKey;
-use bitcoin_rs::primitives::Address;
-use bitcoin_rs::primitives::{
-    amount::Amount, bip32::Xpriv, key::Secp256k1, Network, OutPoint, ScriptBuf, Transaction,
-    XOnlyPublicKey,
+use bitcoin::{
+    amount::Amount, bip32::Xpriv, key::Secp256k1, Address, Network, OutPoint, ScriptBuf,
+    Transaction, XOnlyPublicKey,
 };
+use bitcoin_rs::key::UnspendableKey;
 use bitcoin_rs::script::MultisigScript;
 use bitcoin_rs::transaction::WitnessControl;
 use bitcoincore_rpc::{Auth, Client};
@@ -76,7 +75,7 @@ fn main() {
     let receiver_key = Xpriv::new_master(NETWORK, &[0]).unwrap();
     let receiver_pubkey = receiver_key.to_keypair(&secp).public_key();
     let receiver_address = Address::p2pkh(
-        bitcoin_rs::primitives::PublicKey::from(receiver_pubkey),
+        bitcoin::PublicKey::from(receiver_pubkey),
         NETWORK,
     );
 

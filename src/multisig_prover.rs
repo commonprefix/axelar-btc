@@ -1,6 +1,6 @@
 use std::cmp;
 
-use bitcoin_rs::primitives::{
+use bitcoin::{
     absolute::LockTime, script, transaction, Address, Amount, ScriptBuf, TapSighash, Weight,
     Witness,
 };

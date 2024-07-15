@@ -1,11 +1,11 @@
-use bitcoin_hashes::Hash;
-use bitcoin_rs::primitives::{
+use bitcoin::{
     bip32::Xpriv,
     key::Secp256k1,
     secp256k1::{All, Message},
     taproot::Signature,
     TapSighash, TapSighashType, XOnlyPublicKey,
 };
+use bitcoin_hashes::Hash;
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
