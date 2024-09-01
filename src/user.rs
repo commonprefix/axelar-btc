@@ -1,7 +1,7 @@
 use bitcoin::{absolute::LockTime, script, transaction, Amount, ScriptBuf, Witness};
 use bitcoincore_rpc::{Client, RpcApi};
 
-use crate::{create_op_return, Utxo};
+use crate::utils::{create_op_return, Utxo};
 
 pub struct User;
 

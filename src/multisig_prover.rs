@@ -1,4 +1,4 @@
-use std::cmp;
+use std::{cmp, collections::BTreeMap};
 
 use bitcoin::{
     absolute::LockTime, script, transaction, Address, Amount, ScriptBuf, TapSighash, Weight,
@@ -6,15 +6,25 @@ use bitcoin::{
 };
 use bitcoin_rs::transaction::TaprootSighash;
 
-use crate::{handover_input_size, Utxo, SIG_SIZE};
+use crate::utils::{handover_input_size, should_update_verifier_set, Utxo, SIG_SIZE};
 
 const PEG_IN_OUTPUT_SIZE: usize = 43; // As reported by `peg_in.output[0].size()`. TODO: double-check that this is always right
 const COMMITTEE_SIZE: usize = 75; // TODO: replace
 
 type Payouts = Vec<(Amount, Address)>;
+#[derive(Clone)]
+pub struct VerifierSet {
+    pub signers: BTreeMap<String, String>,
+}
+
+pub struct MultisigProverConfig {
+    pub verifier_set_diff_threshold: usize, // threshold for updating the verifier set
+}
 
 pub struct MultisigProver {
     pub available_utxos: Vec<Utxo>,
+    pub verifier_set: VerifierSet,
+    pub config: MultisigProverConfig,
 }
 
 impl MultisigProver {
@@ -64,7 +74,16 @@ impl MultisigProver {
         dust_limit: Amount,
         old_script: &ScriptBuf,
         new_script_pubkey: &ScriptBuf,
-    ) -> Vec<(transaction::Transaction, Vec<TapSighash>)> {
+        new_verifier_set: &VerifierSet,
+    ) -> Option<Vec<(transaction::Transaction, Vec<TapSighash>)>> {
+        if !should_update_verifier_set(
+            new_verifier_set,
+            &self.verifier_set,
+            self.config.verifier_set_diff_threshold,
+        ) {
+            return None;
+        }
+
         // TODO: Maybe we should ceil the old_outputs.len() / max_output_no division to make
         // sure that we always get exactly max_output_no outputs. Consider the case of
         // old_outsputs.len() = 3, max_output_no = 2
@@ -131,15 +150,17 @@ impl MultisigProver {
             panic!("All available UTXOs are less than the fee.")
         }
 
-        handover_txs
-            .iter()
-            .map(|(tx, prevouts)| {
-                (
-                    tx.clone(),
-                    tx.taproot_sighashes(prevouts.clone(), old_script),
-                )
-            })
-            .collect()
+        Some(
+            handover_txs
+                .iter()
+                .map(|(tx, prevouts)| {
+                    (
+                        tx.clone(),
+                        tx.taproot_sighashes(prevouts.clone(), old_script),
+                    )
+                })
+                .collect(),
+        )
     }
 
     pub fn consume_utxos(
@@ -195,4 +216,6 @@ impl MultisigProver {
 
         (inputs, prevouts, outputs, change)
     }
+
+    // pub fn consolidate_utxos(&mut self) -> Vec<(transaction::Transaction, Vec<TapSighash>)> {}
 }
