@@ -1,8 +1,8 @@
 use std::{cmp, collections::BTreeMap};
 
 use bitcoin::{
-    absolute::LockTime, script, transaction, Address, Amount, ScriptBuf, TapSighash, Weight,
-    Witness,
+    absolute::LockTime, script, transaction, Address, Amount, ScriptBuf, TapSighash, TxIn, TxOut,
+    Weight, Witness,
 };
 use bitcoin_rs::transaction::TaprootSighash;
 
@@ -19,6 +19,7 @@ pub struct VerifierSet {
 
 pub struct MultisigProverConfig {
     pub verifier_set_diff_threshold: usize, // threshold for updating the verifier set
+    pub min_amount_per_output: Amount,
 }
 
 pub struct MultisigProver {
@@ -217,5 +218,67 @@ impl MultisigProver {
         (inputs, prevouts, outputs, change)
     }
 
-    // pub fn consolidate_utxos(&mut self) -> Vec<(transaction::Transaction, Vec<TapSighash>)> {}
+    pub fn consolidate_utxos(
+        &self,
+        max_output_no: usize,
+        miner_fee: Amount,
+        script: &ScriptBuf,
+        script_pubkey: &ScriptBuf,
+    ) -> (transaction::Transaction, Vec<TapSighash>) {
+        // TODO: implement partial consolidation
+        let total_sum = self
+            .available_utxos
+            .iter()
+            .fold(Amount::ZERO, |acc, utxo| acc + utxo.txout.value)
+            - miner_fee;
+
+        let mut total_outputs = max_output_no as u64;
+        let mut amount_per_output = total_sum / total_outputs as u64;
+        if amount_per_output < self.config.min_amount_per_output {
+            amount_per_output = self.config.min_amount_per_output;
+            total_outputs = (total_sum / amount_per_output.to_sat()).to_sat();
+        }
+        let remainder = total_sum - amount_per_output * total_outputs as u64;
+
+        let tx_inputs: Vec<TxIn> = self
+            .available_utxos
+            .iter()
+            .map(|utxo| transaction::TxIn {
+                previous_output: utxo.outpoint,
+                script_sig: script::ScriptBuf::new(),
+                sequence: transaction::Sequence::MAX,
+                witness: Witness::default(),
+            })
+            .collect();
+        let mut tx_outputs = Vec::with_capacity(total_outputs as usize);
+        let mut amount_left = total_sum;
+        for i in 0..total_outputs {
+            let mut output_amount = cmp::min(amount_per_output, amount_left);
+            if i == total_outputs - 1 {
+                // Add remainder to the last output
+                output_amount += remainder;
+            }
+
+            tx_outputs.push(transaction::TxOut {
+                value: output_amount,
+                script_pubkey: script_pubkey.clone(),
+            });
+
+            amount_left -= output_amount;
+        }
+        let prevouts: Vec<TxOut> = self
+            .available_utxos
+            .iter()
+            .map(|utxo| utxo.txout.clone())
+            .collect();
+
+        let tx = transaction::Transaction {
+            version: transaction::Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: tx_inputs,
+            output: tx_outputs,
+        };
+
+        (tx.clone(), tx.taproot_sighashes(prevouts, script))
+    }
 }

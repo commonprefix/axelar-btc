@@ -335,6 +335,7 @@ pub fn init_multisig_prover(verifier_set: &VerifierSet) -> MultisigProver {
         verifier_set: verifier_set.clone(),
         config: MultisigProverConfig {
             verifier_set_diff_threshold: 1,
+            min_amount_per_output: Amount::from_btc(1.0).unwrap(),
         },
     }
 }
@@ -429,4 +430,24 @@ pub fn update_multisig_prover_utxos(tx: &Vec<Transaction>, multisig_prover: &mut
                 .collect::<Vec<Utxo>>()
         })
         .collect();
+}
+
+pub fn create_consolidation_tx(
+    multisig_prover: &mut MultisigProver,
+    validators: &Vec<Validator>,
+    secp: &Secp256k1<All>,
+    script: &ScriptBuf,
+    script_pubkey: &ScriptBuf,
+) -> Transaction {
+    let (mut tx, sighashes) =
+        multisig_prover.consolidate_utxos(4, Amount::from_sat(1000), script, script_pubkey);
+
+    let committee_signatures = collect_signatures(&sighashes, validators, &secp);
+    tx.finalize_witness(
+        &committee_signatures,
+        script,
+        &XOnlyPublicKey::create_unspendable_key(),
+        &secp,
+    );
+    tx
 }
