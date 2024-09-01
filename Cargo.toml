@@ -13,3 +13,4 @@ serde = "*"
 serde_json = "*"
 bitcoin-rs = { git = "ssh://git@github.com/commonprefix/bitcoin.rs.git" }
 bitcoin = "0.32.2"
+itertools = "0.13.0"
