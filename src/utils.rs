@@ -27,8 +27,7 @@ use crate::{
 };
 
 pub const SIG_SIZE: usize = 64; // Schnorr sig size (https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki#verification)
-const REST_SCRIPT_SIZE: usize = 42; // TODO: replace with sth that isn't the answer to everything
-const FIXED_INPUT_OVERHEAD: usize = 42; // TODO: replace with sth that isn't the answer to everything
+pub const COMMITTEE_SIZE: usize = 75; // TODO: replace
 const MAX_BTC_INT: i64 = 0x7fffffff;
 
 #[derive(Clone)]
@@ -133,11 +132,6 @@ pub fn test_and_submit(
             );
         }
     }
-}
-
-pub fn handover_input_size(sigs: usize) -> usize {
-    // TODO: check me
-    SIG_SIZE * sigs + REST_SCRIPT_SIZE + FIXED_INPUT_OVERHEAD
 }
 
 pub fn get_private_key(seed: usize, network: Network) -> Option<Xpriv> {
@@ -336,6 +330,7 @@ pub fn init_multisig_prover(verifier_set: &VerifierSet) -> MultisigProver {
         config: MultisigProverConfig {
             verifier_set_diff_threshold: 1,
             min_amount_per_output: Amount::from_btc(1.0).unwrap(),
+            max_tx_size_vbytes: 500,
         },
     }
 }
@@ -350,9 +345,7 @@ pub fn create_handover_transactions(
 ) -> Vec<Transaction> {
     let handover_option = multisig_prover.create_handover_tx(
         2,
-        100_000,
-        Amount::from_sat(1_000),
-        Amount::from_sat(1),
+        Amount::from_sat(10_000),
         old_script,
         new_script_pubkey,
         &new_verifier_set,
@@ -432,22 +425,64 @@ pub fn update_multisig_prover_utxos(tx: &Vec<Transaction>, multisig_prover: &mut
         .collect();
 }
 
-pub fn create_consolidation_tx(
+pub fn create_consolidation_txs(
     multisig_prover: &mut MultisigProver,
     validators: &Vec<Validator>,
     secp: &Secp256k1<All>,
     script: &ScriptBuf,
     script_pubkey: &ScriptBuf,
-) -> Transaction {
-    let (mut tx, sighashes) =
-        multisig_prover.consolidate_utxos(4, Amount::from_sat(1000), script, script_pubkey);
+) -> Vec<Transaction> {
+    let mut unsigned_transactions =
+        multisig_prover.consolidate_utxos(4, Amount::from_sat(10000), script, script_pubkey);
 
-    let committee_signatures = collect_signatures(&sighashes, validators, &secp);
-    tx.finalize_witness(
-        &committee_signatures,
-        script,
-        &XOnlyPublicKey::create_unspendable_key(),
-        &secp,
-    );
-    tx
+    unsigned_transactions
+        .iter_mut()
+        .map(|tx| {
+            let committee_signatures = collect_signatures(&tx.1, validators, &secp);
+            tx.0.finalize_witness(
+                &committee_signatures,
+                script,
+                &XOnlyPublicKey::create_unspendable_key(),
+                &secp,
+            );
+            tx.0.clone()
+        })
+        .collect::<Vec<Transaction>>()
+}
+
+pub fn estimate_taproot_input_vbytes(script: &ScriptBuf, num_signatures: usize) -> usize {
+    let outpoint_size = 32 + 4; // txid + vout
+    let sequence_size = 4;
+    let merkle_depth = 0;
+    let control_block_size = 32 + merkle_depth * 32;
+    let script_size = script.len();
+    let signatures_size = 64 * num_signatures;
+
+    let total_non_witness_size = outpoint_size + sequence_size;
+    let total_witness_size = control_block_size + script_size + signatures_size;
+    let weight_units = (total_non_witness_size * 3) + total_non_witness_size + total_witness_size;
+
+    weight_units / 4
+}
+
+pub fn estimate_taproot_output_vbytes(script_pubkey: &ScriptBuf) -> usize {
+    let output_value_size = 8;
+    let output_script_size = script_pubkey.len();
+    output_value_size + output_script_size
+}
+
+pub fn calculate_output_distribution(
+    max_output_no: u64,
+    total_input_value: Amount,
+    min_amount_per_output: Amount,
+) -> (u64, Amount, Amount) {
+    let mut total_outputs = max_output_no as u64;
+    let mut amount_per_output = total_input_value / total_outputs as u64;
+    if amount_per_output < min_amount_per_output {
+        amount_per_output = min_amount_per_output;
+        total_outputs = (total_input_value / amount_per_output.to_sat()).to_sat();
+    }
+    let remainder = total_input_value - amount_per_output * total_outputs as u64;
+
+    (total_outputs, amount_per_output, remainder)
 }

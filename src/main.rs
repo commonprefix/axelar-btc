@@ -1,9 +1,9 @@
 use axelar_btc::utils::{
-    create_consolidation_tx, create_handover_transactions, create_multisig_script,
+    create_consolidation_txs, create_handover_transactions, create_multisig_script,
     create_peg_out_transaction, init_multisig_prover, init_rpc_client, init_wallet, parse_args,
     setup_validators, test_and_submit, update_multisig_prover_utxos, user_deposit,
 };
-use bitcoin::{key::Secp256k1, Amount, Network};
+use bitcoin::{key::Secp256k1, Network};
 
 const WALLET: &str = "wallets/default";
 const COOKIE: &str = ".cookie";
@@ -35,7 +35,7 @@ fn main() {
     update_multisig_prover_utxos(&vec![peg_in_tx.clone()], &mut multisig_prover);
 
     // TODO: Simulate consolidation of UTXOs
-    let consolidation_tx = create_consolidation_tx(
+    let mut consolidation_txs = create_consolidation_txs(
         &mut multisig_prover,
         &validators,
         &secp,
@@ -44,7 +44,7 @@ fn main() {
     );
 
     // Update multisig prover with the UTXOs from the consolidation transaction
-    update_multisig_prover_utxos(&vec![consolidation_tx.clone()], &mut multisig_prover);
+    update_multisig_prover_utxos(&consolidation_txs, &mut multisig_prover);
 
     // Simulate a handover of the multisig to a new set of validators
     let old_validators = validators.clone();
@@ -79,7 +79,7 @@ fn main() {
 
     // Test transactions for mempool acceptance and submit them
     let mut txs = vec![peg_in_tx];
-    txs.push(consolidation_tx);
+    txs.append(&mut consolidation_txs);
     txs.append(&mut handover_txs);
     txs.push(peg_out_tx);
     test_and_submit(&rpc, txs, address);

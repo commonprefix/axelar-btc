@@ -6,10 +6,10 @@ use bitcoin::{
 };
 use bitcoin_rs::transaction::TaprootSighash;
 
-use crate::utils::{handover_input_size, should_update_verifier_set, Utxo, SIG_SIZE};
-
-const PEG_IN_OUTPUT_SIZE: usize = 43; // As reported by `peg_in.output[0].size()`. TODO: double-check that this is always right
-const COMMITTEE_SIZE: usize = 75; // TODO: replace
+use crate::utils::{
+    calculate_output_distribution, estimate_taproot_input_vbytes, estimate_taproot_output_vbytes,
+    should_update_verifier_set, Utxo, COMMITTEE_SIZE, SIG_SIZE,
+};
 
 type Payouts = Vec<(Amount, Address)>;
 #[derive(Clone)]
@@ -20,6 +20,7 @@ pub struct VerifierSet {
 pub struct MultisigProverConfig {
     pub verifier_set_diff_threshold: usize, // threshold for updating the verifier set
     pub min_amount_per_output: Amount,
+    pub max_tx_size_vbytes: usize,
 }
 
 pub struct MultisigProver {
@@ -70,9 +71,7 @@ impl MultisigProver {
     pub fn create_handover_tx(
         &self,
         max_output_no: usize,
-        max_tx_size: usize,
         miner_fee: Amount,
-        dust_limit: Amount,
         old_script: &ScriptBuf,
         new_script_pubkey: &ScriptBuf,
         new_verifier_set: &VerifierSet,
@@ -85,90 +84,14 @@ impl MultisigProver {
             return None;
         }
 
-        // TODO: Maybe we should ceil the old_outputs.len() / max_output_no division to make
-        // sure that we always get exactly max_output_no outputs. Consider the case of
-        // old_outsputs.len() = 3, max_output_no = 2
-        let fan_in = cmp::max(1, self.available_utxos.len() / max_output_no);
-
-        // Assume that all inputs & outputs have the same size
-        // This assumption might be wrong for inputs if the number of validator sigs varies
-        // TODO: For now, assume that all the validators will sign the handover. An optimization would be
-        // to calculate the maximum number of validators that could be required in order to
-        // achieve quorum, by summing the stakes of the smallest validators, and use that
-        // to calculate the input size.
-        let input_size = handover_input_size(COMMITTEE_SIZE);
-        let max_outputs_per_tx = max_tx_size / (fan_in * input_size + PEG_IN_OUTPUT_SIZE);
-
-        let mut handover_txs = vec![];
-        let mut fee_reducted = false;
-        // TODO: maybe use `iter::iterator::array_chunks()` when stabilized to avoid `collect()`ing
-        // (https://doc.rust-lang.org/stable/std/iter/trait.Iterator.html#method.array_chunks)
-        let old_outputs_chunked_per_new_output: Vec<_> =
-            self.available_utxos.chunks(fan_in).collect();
-        let old_outputs_chunked_per_tx =
-            old_outputs_chunked_per_new_output.chunks(max_outputs_per_tx);
-        for old_outputs_chunks_for_tx in old_outputs_chunked_per_tx.clone() {
-            let mut new_tx_inputs = vec![];
-            let mut new_tx_outputs = vec![];
-            let mut prevouts = vec![];
-            for old_outputs_chunk in old_outputs_chunks_for_tx {
-                let mut in_value = Amount::ZERO;
-                for utxo in *old_outputs_chunk {
-                    in_value += utxo.txout.value;
-                    new_tx_inputs.push(transaction::TxIn {
-                        previous_output: utxo.outpoint,
-                        script_sig: script::ScriptBuf::new(),
-                        sequence: transaction::Sequence::MAX,
-                        witness: Witness::default(), // TODO: need signatures here
-                    });
-                    prevouts.push(utxo.txout.clone().clone());
-                }
-
-                // TODO: split the fee among the UTXOs
-                if in_value > miner_fee + dust_limit && !fee_reducted {
-                    in_value = in_value - miner_fee;
-                    fee_reducted = true;
-                }
-
-                new_tx_outputs.push(transaction::TxOut {
-                    value: in_value,
-                    script_pubkey: new_script_pubkey.clone(),
-                });
-            }
-
-            let tx = transaction::Transaction {
-                version: transaction::Version::TWO,
-                lock_time: LockTime::ZERO,
-                input: new_tx_inputs,
-                output: new_tx_outputs,
-            };
-
-            handover_txs.push((tx, prevouts));
-        }
-
-        if !fee_reducted {
-            // TODO: split the fee among the UTXOs
-            panic!("All available UTXOs are less than the fee.")
-        }
-
-        Some(
-            handover_txs
-                .iter()
-                .map(|(tx, prevouts)| {
-                    (
-                        tx.clone(),
-                        tx.taproot_sighashes(prevouts.clone(), old_script),
-                    )
-                })
-                .collect(),
-        )
+        Some(self.consolidate_utxos(max_output_no, miner_fee, old_script, new_script_pubkey))
     }
 
     pub fn consume_utxos(
         &mut self,
         payouts: Payouts, // First elements are net payments to the client after extracting our fee
         miner_fee_per_vbyte: Amount, // fee in sats per vbyte
-        dust_limit: Amount,
+        dust_limit: Amount, // TODO: take into account dust_limit
     ) -> (
         Vec<transaction::TxIn>,
         Vec<transaction::TxOut>,
@@ -221,64 +144,95 @@ impl MultisigProver {
     pub fn consolidate_utxos(
         &self,
         max_output_no: usize,
-        miner_fee: Amount,
+        miner_fee: Amount, // TODO: should probable be fee per vbyte instead of an absolute amount
         script: &ScriptBuf,
         script_pubkey: &ScriptBuf,
-    ) -> (transaction::Transaction, Vec<TapSighash>) {
-        // TODO: implement partial consolidation
-        let total_sum = self
-            .available_utxos
-            .iter()
-            .fold(Amount::ZERO, |acc, utxo| acc + utxo.txout.value)
-            - miner_fee;
+    ) -> Vec<(transaction::Transaction, Vec<TapSighash>)> {
+        let mut transactions = Vec::new();
+        let mut remaining_utxos = self.available_utxos.clone();
 
-        let mut total_outputs = max_output_no as u64;
-        let mut amount_per_output = total_sum / total_outputs as u64;
-        if amount_per_output < self.config.min_amount_per_output {
-            amount_per_output = self.config.min_amount_per_output;
-            total_outputs = (total_sum / amount_per_output.to_sat()).to_sat();
-        }
-        let remainder = total_sum - amount_per_output * total_outputs as u64;
+        let input_size_vbytes = estimate_taproot_input_vbytes(script, COMMITTEE_SIZE);
+        let output_size_vbytes = estimate_taproot_output_vbytes(script_pubkey);
 
-        let tx_inputs: Vec<TxIn> = self
-            .available_utxos
-            .iter()
-            .map(|utxo| transaction::TxIn {
-                previous_output: utxo.outpoint,
-                script_sig: script::ScriptBuf::new(),
-                sequence: transaction::Sequence::MAX,
-                witness: Witness::default(),
-            })
-            .collect();
-        let mut tx_outputs = Vec::with_capacity(total_outputs as usize);
-        let mut amount_left = total_sum;
-        for i in 0..total_outputs {
-            let mut output_amount = cmp::min(amount_per_output, amount_left);
-            if i == total_outputs - 1 {
-                // Add remainder to the last output
-                output_amount += remainder;
+        while !remaining_utxos.is_empty() {
+            let mut current_utxos = Vec::new();
+            let mut current_tx_size = 0;
+            let mut total_input_value = Amount::ZERO;
+
+            for utxo in remaining_utxos.iter() {
+                let new_total_input_value = total_input_value + utxo.txout.value;
+
+                let (total_outputs, _, _) = calculate_output_distribution(
+                    max_output_no as u64,
+                    new_total_input_value - miner_fee, // TODO: make sure that miner_fee is greater than the total value
+                    self.config.min_amount_per_output,
+                );
+
+                let outputs_size_vbytes = (total_outputs as usize) * output_size_vbytes;
+
+                let new_tx_size = current_tx_size + input_size_vbytes + outputs_size_vbytes;
+
+                if new_tx_size > self.config.max_tx_size_vbytes {
+                    break;
+                }
+
+                current_utxos.push(utxo.clone());
+                current_tx_size = new_tx_size;
+                total_input_value += utxo.txout.value;
             }
 
-            tx_outputs.push(transaction::TxOut {
-                value: output_amount,
-                script_pubkey: script_pubkey.clone(),
-            });
+            if current_utxos.is_empty() {
+                break;
+            }
 
-            amount_left -= output_amount;
+            remaining_utxos = remaining_utxos[current_utxos.len()..].to_vec();
+
+            let (total_outputs, amount_per_output, remainder) = calculate_output_distribution(
+                max_output_no as u64,
+                total_input_value - miner_fee,
+                self.config.min_amount_per_output,
+            );
+
+            let tx_inputs: Vec<TxIn> = current_utxos
+                .iter()
+                .map(|utxo| transaction::TxIn {
+                    previous_output: utxo.outpoint,
+                    script_sig: script::ScriptBuf::new(),
+                    sequence: transaction::Sequence::MAX,
+                    witness: Witness::default(),
+                })
+                .collect();
+
+            let mut tx_outputs = Vec::with_capacity(total_outputs as usize);
+            let mut amount_left = total_input_value;
+            for i in 0..total_outputs {
+                let mut output_amount = cmp::min(amount_per_output, amount_left);
+                if i == total_outputs - 1 {
+                    // Add remainder to the last output
+                    output_amount += remainder;
+                }
+
+                tx_outputs.push(transaction::TxOut {
+                    value: output_amount,
+                    script_pubkey: script_pubkey.clone(),
+                });
+
+                amount_left -= output_amount;
+            }
+            let prevouts: Vec<TxOut> = current_utxos
+                .iter()
+                .map(|utxo| utxo.txout.clone())
+                .collect();
+
+            let tx = transaction::Transaction {
+                version: transaction::Version::TWO,
+                lock_time: LockTime::ZERO,
+                input: tx_inputs,
+                output: tx_outputs,
+            };
+
+            transactions.push((tx.clone(), tx.taproot_sighashes(prevouts, script)));
         }
-        let prevouts: Vec<TxOut> = self
-            .available_utxos
-            .iter()
-            .map(|utxo| utxo.txout.clone())
-            .collect();
-
-        let tx = transaction::Transaction {
-            version: transaction::Version::TWO,
-            lock_time: LockTime::ZERO,
-            input: tx_inputs,
-            output: tx_outputs,
-        };
-
-        (tx.clone(), tx.taproot_sighashes(prevouts, script))
+        transactions
     }
 }
