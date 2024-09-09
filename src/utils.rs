@@ -30,7 +30,7 @@ pub const SIG_SIZE: usize = 64; // Schnorr sig size (https://github.com/bitcoin/
 pub const COMMITTEE_SIZE: usize = 75; // TODO: replace
 const MAX_BTC_INT: i64 = 0x7fffffff;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Utxo {
     pub outpoint: OutPoint,
     pub txout: TxOut,
@@ -450,12 +450,12 @@ pub fn create_consolidation_txs(
         .collect::<Vec<Transaction>>()
 }
 
-pub fn estimate_taproot_input_vbytes(script: &ScriptBuf, num_signatures: usize) -> usize {
+pub fn estimate_taproot_input_vbytes(script: &ScriptBuf, num_signatures: u64) -> u64 {
     let outpoint_size = 32 + 4; // txid + vout
     let sequence_size = 4;
     let merkle_depth = 0;
     let control_block_size = 32 + merkle_depth * 32;
-    let script_size = script.len();
+    let script_size = script.len() as u64;
     let signatures_size = 64 * num_signatures;
 
     let total_non_witness_size = outpoint_size + sequence_size;
@@ -465,9 +465,9 @@ pub fn estimate_taproot_input_vbytes(script: &ScriptBuf, num_signatures: usize) 
     weight_units / 4
 }
 
-pub fn estimate_taproot_output_vbytes(script_pubkey: &ScriptBuf) -> usize {
+pub fn estimate_taproot_output_vbytes(script_pubkey: &ScriptBuf) -> u64 {
     let output_value_size = 8;
-    let output_script_size = script_pubkey.len();
+    let output_script_size = script_pubkey.len() as u64;
     output_value_size + output_script_size
 }
 
