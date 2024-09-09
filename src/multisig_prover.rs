@@ -6,6 +6,7 @@ use bitcoin::{
     Witness,
 };
 use bitcoin_rs::transaction::TaprootSighash;
+use chrono::{DateTime, Duration, Utc};
 
 use crate::utils::{
     calculate_output_distribution, estimate_taproot_input_vbytes, estimate_taproot_output_vbytes,
@@ -22,10 +23,12 @@ pub struct MultisigProverConfig {
     pub verifier_set_diff_threshold: usize, // threshold for updating the verifier set
     pub min_amount_per_output: Amount,
     pub max_tx_size_vbytes: u64,
+    pub max_output_no: usize,
 }
 
 pub struct MultisigProver {
     pub available_utxos: Vec<Utxo>,
+    pub last_consolidation_timestamp: i64,
     pub verifier_set: VerifierSet,
     pub config: MultisigProverConfig,
 }
@@ -70,8 +73,7 @@ impl MultisigProver {
     }
 
     pub fn create_handover_tx(
-        &self,
-        max_output_no: usize,
+        &mut self,
         miner_fee: Amount,
         old_script: &ScriptBuf,
         new_script_pubkey: &ScriptBuf,
@@ -85,7 +87,7 @@ impl MultisigProver {
             return None;
         }
 
-        Some(self.consolidate_utxos(max_output_no, miner_fee, old_script, new_script_pubkey))
+        Some(self.consolidate_utxos(miner_fee, old_script, new_script_pubkey))
     }
 
     pub fn consume_utxos(
@@ -185,8 +187,7 @@ impl MultisigProver {
     }
 
     pub fn consolidate_utxos(
-        &self,
-        max_output_no: usize,
+        &mut self,
         miner_fee: Amount, // TODO: should probable be fee per vbyte instead of an absolute amount
         script: &ScriptBuf,
         script_pubkey: &ScriptBuf,
@@ -206,7 +207,7 @@ impl MultisigProver {
                 let new_total_input_value = total_input_value + utxo.txout.value;
 
                 let (total_outputs, _, _) = calculate_output_distribution(
-                    max_output_no as u64,
+                    self.config.max_output_no as u64,
                     new_total_input_value - miner_fee, // TODO: make sure that miner_fee is greater than the total value
                     self.config.min_amount_per_output,
                 );
@@ -231,7 +232,7 @@ impl MultisigProver {
             remaining_utxos = remaining_utxos[current_utxos.len()..].to_vec();
 
             let (total_outputs, amount_per_output, remainder) = calculate_output_distribution(
-                max_output_no as u64,
+                self.config.max_output_no as u64,
                 total_input_value - miner_fee,
                 self.config.min_amount_per_output,
             );
@@ -276,7 +277,36 @@ impl MultisigProver {
 
             transactions.push((tx.clone(), tx.taproot_sighashes(prevouts, script)));
         }
+
+        self.last_consolidation_timestamp = Utc::now().timestamp();
+
         transactions
+    }
+
+    pub fn should_consolidate_utxos(&self) -> bool {
+        for utxo in self.available_utxos.iter() {
+            if utxo.txout.value < self.config.min_amount_per_output / 2 {
+                // TODO: calibrate that
+                return true;
+            }
+        }
+
+        if self.available_utxos.len() > self.config.max_output_no * 2 {
+            // TODO: calibrate that
+            return true;
+        }
+
+        let now = chrono::Utc::now();
+        let last_consolidation = DateTime::from_timestamp(self.last_consolidation_timestamp, 0)
+            .unwrap()
+            .to_utc();
+
+        if now - last_consolidation > Duration::seconds(10) {
+            // TODO: calibrate that
+            return true;
+        }
+
+        return false;
     }
 }
 
@@ -318,6 +348,7 @@ mod tests {
     fn mock_multisig_prover(available_utxos: Vec<Utxo>) -> MultisigProver {
         MultisigProver {
             available_utxos,
+            last_consolidation_timestamp: 0,
             verifier_set: VerifierSet {
                 signers: BTreeMap::new(),
             },
@@ -325,6 +356,7 @@ mod tests {
                 verifier_set_diff_threshold: 1,
                 min_amount_per_output: Amount::from_sat(1000),
                 max_tx_size_vbytes: 1000,
+                max_output_no: 4,
             },
         }
     }

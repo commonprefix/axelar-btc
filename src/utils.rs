@@ -327,10 +327,12 @@ pub fn init_multisig_prover(verifier_set: &VerifierSet) -> MultisigProver {
     MultisigProver {
         available_utxos: vec![], // Will be populated later
         verifier_set: verifier_set.clone(),
+        last_consolidation_timestamp: 0,
         config: MultisigProverConfig {
             verifier_set_diff_threshold: 1,
             min_amount_per_output: Amount::from_btc(1.0).unwrap(),
             max_tx_size_vbytes: 500,
+            max_output_no: 4,
         },
     }
 }
@@ -344,7 +346,6 @@ pub fn create_handover_transactions(
     new_verifier_set: &VerifierSet,
 ) -> Vec<Transaction> {
     let handover_option = multisig_prover.create_handover_tx(
-        2,
         Amount::from_sat(10_000),
         old_script,
         new_script_pubkey,
@@ -433,7 +434,7 @@ pub fn create_consolidation_txs(
     script_pubkey: &ScriptBuf,
 ) -> Vec<Transaction> {
     let mut unsigned_transactions =
-        multisig_prover.consolidate_utxos(4, Amount::from_sat(10000), script, script_pubkey);
+        multisig_prover.consolidate_utxos(Amount::from_sat(10000), script, script_pubkey);
 
     unsigned_transactions
         .iter_mut()
