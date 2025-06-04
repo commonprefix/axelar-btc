@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use bitcoin::{
     key::{rand, Secp256k1},
     secp256k1::SecretKey,
-    Address, Amount, CompressedPublicKey, Network, NetworkKind, OutPoint, PrivateKey,
+    Address, Amount, BlockHash, CompressedPublicKey, Network, NetworkKind, OutPoint, PrivateKey,
 };
 use bitcoincore_rpc::{Auth, Client, RpcApi};
 
@@ -54,19 +54,16 @@ pub fn generate_key_pair() -> (PrivateKey, Address) {
     (private_key, address)
 }
 
-fn get_funding_utxo(rpc: &Client, block_height: u64) -> Utxo {
-    let coinbase_block_hash = rpc.get_block_hash(block_height).unwrap();
-
-    let block = rpc.get_block_info(&coinbase_block_hash).unwrap();
+fn get_funding_utxo(rpc: &Client, block_hash: BlockHash) -> Utxo {
+    let block = rpc.get_block_info(&block_hash).unwrap();
     let coinbase_txid = block.tx[0]; // Coinbase is always tx[0]
 
     let raw_tx = rpc
-        .get_raw_transaction(&coinbase_txid, Some(&coinbase_block_hash))
+        .get_raw_transaction(&coinbase_txid, Some(&block_hash))
         .unwrap();
     let tx_decoded = rpc.decode_raw_transaction(&raw_tx, None).unwrap();
 
     let vout_index = 0;
-
     Utxo {
         outpoint: OutPoint::new(coinbase_txid, vout_index),
         amount: tx_decoded.vout[vout_index as usize].value,
@@ -74,11 +71,21 @@ fn get_funding_utxo(rpc: &Client, block_height: u64) -> Utxo {
 }
 
 pub fn fund_address(rpc: &Client, address: &Address) -> Utxo {
-    rpc.generate_to_address(101, &address).unwrap();
+    let block_hash = rpc.generate_to_address(1, &address).unwrap()[0];
+    get_funding_utxo(rpc, block_hash)
+}
 
-    let blockchain_info = rpc.get_blockchain_info().unwrap();
-    let tip_height = blockchain_info.blocks;
-    let coinbase_block_height = tip_height - 100;
+pub fn fund_addresses(rpc: &Client, address: Vec<&Address>) -> Vec<Utxo> {
+    let mut utxos = vec![];
+    for addr in address {
+        let utxo = fund_address(rpc, addr);
+        utxos.push(utxo);
+    }
 
-    get_funding_utxo(rpc, coinbase_block_height)
+    utxos
+}
+
+pub fn mine_blocks(rpc: &Client, count: u64) -> Vec<BlockHash> {
+    let (_, address) = generate_key_pair();
+    rpc.generate_to_address(count, &address).unwrap()
 }
