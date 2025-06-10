@@ -1,3 +1,11 @@
+# TRUC transaction creation script
+## Setup
+- Rename `config/example.toml` to `{testnet4,signet,mainnet}.toml` depending on your network.
+- Update the configuration file with your private key and other necessary parameters.
+
+## Run
+- `cargo run --bin truc -- --network <NETWORK> --fee <TOTAL_FEE>`
+
 # Construction Test
 ## Setup
 - Install Bitcoin Core:

@@ -3,15 +3,23 @@ name = "axelar-btc"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "multisig"
+path = "src/bin/multisig.rs"
+
+[[bin]]
+name = "truc"
+path = "src/bin/truc.rs"
 
 [dependencies]
 bitcoincore-rpc = { git = "https://github.com/rust-bitcoin/rust-bitcoincore-rpc" }
 bitcoin_hashes = "0.14.0"
 reqwest = { version = "*", features = ["blocking", "json"] }
-serde = "*"
+serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 bitcoin-rs = { git = "ssh://git@github.com/commonprefix/bitcoin.rs.git" }
 bitcoin = "0.32.6"
 itertools = "0.13.0"
 chrono = "0.4.38"
+clap = { version = "4.0", features = ["derive"] }
+toml = "0.8"

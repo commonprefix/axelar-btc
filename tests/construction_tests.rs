@@ -3,7 +3,7 @@ use axelar_btc::transactions::{
     create_and_sign_main_transaction_and_fee_transaction,
     create_and_sign_withdrawal_spend_transaction, WithdrawalRequest,
 };
-use bitcoin::{policy, Amount};
+use bitcoin::Amount;
 use bitcoincore_rpc::RpcApi;
 
 mod utils;

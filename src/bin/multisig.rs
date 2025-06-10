@@ -17,6 +17,9 @@ fn main() {
 
     // Initialize wallet and get the initial UTXO information
     let (address, coinbase_tx, coinbase_vout) = init_wallet(&bitcoin_dir, &rpc, NETWORK, WALLET);
+    println!("{}", coinbase_tx.compute_txid());
+    println!("{}", coinbase_vout);
+    println!("{}", address);
 
     // Setup validators for multisig
     let (validators, verifier_set, threshold) = setup_validators(3, NETWORK);
@@ -27,12 +30,16 @@ fn main() {
     let secp = Secp256k1::new();
     // Create Bitcoin Multisig script representing the validators
     let (script, script_pubkey) = create_multisig_script(&validators, threshold, &secp);
+    println!("{}", script_pubkey);
 
     // User creates a deposit transaction
     let peg_in_tx = user_deposit(&coinbase_tx, coinbase_vout, &script_pubkey, &rpc);
+    println!("{}", peg_in_tx.compute_txid());
 
+    println!("before: {:?}", multisig_prover.available_utxos);
     // Update multisig prover with the UTXOs from the peg-in transaction
     update_multisig_prover_utxos(&vec![peg_in_tx.clone()], &mut multisig_prover);
+    println!("after 1: {:?}", multisig_prover.available_utxos);
 
     // TODO: Simulate consolidation of UTXOs
     let mut consolidation_txs = create_consolidation_txs(
@@ -43,8 +50,12 @@ fn main() {
         &script_pubkey,
     );
 
+    println!("consolidation txs: {:?}", consolidation_txs);
+
+    println!("before 2: {:?}", multisig_prover.available_utxos);
     // Update multisig prover with the UTXOs from the consolidation transaction
     update_multisig_prover_utxos(&consolidation_txs, &mut multisig_prover);
+    println!("after 2: {:?}", multisig_prover.available_utxos);
 
     // Simulate a handover of the multisig to a new set of validators
     let old_validators = validators.clone();
