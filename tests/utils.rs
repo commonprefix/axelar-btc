@@ -1,23 +1,12 @@
 use std::path::PathBuf;
 
+use axelar_btc::transactions::Utxo;
 use bitcoin::{
     key::{rand, Secp256k1},
     secp256k1::SecretKey,
-    Address, Amount, BlockHash, CompressedPublicKey, Network, NetworkKind, OutPoint, PrivateKey,
+    Address, BlockHash, CompressedPublicKey, Network, NetworkKind, OutPoint, PrivateKey,
 };
 use bitcoincore_rpc::{Auth, Client, RpcApi};
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Utxo {
-    pub outpoint: OutPoint,
-    pub amount: Amount,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct WithdrawalRequest {
-    pub address: Address,
-    pub amount: Amount,
-}
 
 const COOKIE: &str = ".cookie";
 const RPC_URL: &str = "http://127.0.0.1:18443";

@@ -1,3 +1,16 @@
+# Construction Test
+## Setup
+- Install Bitcoin Core:
+  * Ubuntu: `snap install bitcoin-core` (If it requires other packages, install them first with `apt`.)
+  * MacOS: follow the instructions found at [https://bitcoin.org/en/full-node#osx-daemon](https://bitcoin.org/en/full-node#osx-daemon).
+- From a terminal, clone this repo: `git clone git@github.com:commonprefix/axelar-btc.git`.
+
+## Run test
+- Set environment variable `BITCOIN_DIR=<path Bitcoin regtest directory>`. Example paths:
+  * MacOS: `/Users/<username>/Library/Application Support/Bitcoin/regtest`
+- Run `./start_regtest.sh && cargo test --test construction_tests -- --nocapture && ./stop_regtest.sh`
+
+
 # Peg-in & Peg-out Transactions Demo
 
 We provide an example of the peg-in transaction, by which a user moves its
